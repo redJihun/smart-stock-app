@@ -14,14 +14,7 @@ A Python sandbox for stock market pricing and trading strategies (주식 시세,
 
 ## Development Setup
 
-This project is in early stages with no build system configured yet. The `.gitignore` is set up for Python development with potential use of:
-
-- Package managers: `pip`, `poetry`, `uv`, `pdm`, or `pipenv`
-- Frameworks: Django or Flask
-- Notebooks: Jupyter or Marimo
-- Testing: `pytest`
-- Linting/formatting: `ruff`
-- Type checking: `mypy`
+확정 스택: **uv** (패키지 매니저) / **ruff** (린트·포맷) / **mypy** (타입 체크) / **pytest** (테스트) / **Jupyter** (노트북)
 
 환경 구성 및 주요 명령어:
 
@@ -94,12 +87,21 @@ Changes:
 
 병합 전략: **Squash Merge** 기본 (단일 핫픽스는 Fast-forward)
 
+커밋 메시지 제안 시 항상 패턴C 형식을 사용한다. `git commit`은 사용자 확인 후 실행한다.
+
 ## Testing
 
 - `pytest` 사용
 - 테스트 파일: `test_{모듈명}.py`
 - 테스트 함수: `test_{기능}_{시나리오}()`
 - 전략·분석 모듈은 테스트 필수, 노트북 탐색 코드는 제외
+
+## Notebooks
+
+- `notebooks/` 아래 파일명은 `kebab-case.ipynb`
+- 탐색이 완료된 로직은 `src/smart_stock/` 모듈로 이동한다
+- 노트북 내 데이터 파일 경로는 `data/raw/` 또는 `data/processed/` 기준으로 작성한다
+- `data/` 디렉토리는 `.gitignore` 대상 — 데이터 파일을 커밋하지 않는다
 
 ## Data Sources
 
@@ -124,4 +126,20 @@ docs/
     {NNNN}-{주제-kebab-case}.md          # 개별 ADR
 ```
 
-새 문서 추가 시 `docs/README.md` 인덱스를 반드시 갱신한다.
+문서 추가 시 갱신 대상:
+
+| 추가한 문서 | 함께 갱신할 인덱스 |
+|---|---|
+| ADR (`architecture-decision-records/*.md`) | `architecture-decision-records/README.md` + `docs/README.md` |
+| 주차 업무일지 (`work-logs/*.md`) | `work-logs/README.md` |
+| 일반 개발 문서 (`docs/*.md`) | `docs/README.md` |
+
+## ADR 작성 기준
+
+다음 조건 중 하나 이상 해당하면 ADR 작성을 제안한다:
+
+- 되돌리기 어려운 기술 결정 (라이브러리 선택, 아키텍처 패턴 등)
+- 여러 선택지를 비교해 채택한 결정
+- 나중에 맥락 없이 보면 이상하게 보일 수 있는 결정
+
+ADR 추가 후 두 인덱스(`architecture-decision-records/README.md`, `docs/README.md`)를 반드시 갱신한다.
