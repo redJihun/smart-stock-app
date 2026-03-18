@@ -24,6 +24,8 @@
 | [ADR-0002](./architecture-decision-records/0002-data-source-selection.md) | 데이터 소스 선택 (FinanceDataReader + yfinance) | Accepted |
 | [ADR-0003](./architecture-decision-records/0003-package-manager-uv.md) | 패키지 매니저 uv 선택 | Accepted |
 | [ADR-0004](./architecture-decision-records/0004-notebook-jupyter.md) | 노트북 도구 Jupyter 선택 | Accepted |
+| [ADR-0005](./architecture-decision-records/0005-cache-format-selection.md) | 로컬 캐시 포맷 선택 (Parquet) | Accepted |
+| [ADR-0006](./architecture-decision-records/0006-agent-team-workflow.md) | 에이전트 팀 워크플로우 채택 (멀티 터미널 + 서브에이전트) | Accepted |
 
 ---
 
@@ -33,4 +35,4 @@
 
 | 파일 | 설명 |
 |------|------|
-| (추가 예정) | |
+| [`PRD.md`](./PRD.md) | 제품 요구사항 정의서 (Product Requirements Document) |

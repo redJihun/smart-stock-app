@@ -25,6 +25,8 @@
 | [ADR-0002](./0002-data-source-selection.md) | 데이터 소스 선택 (FinanceDataReader + yfinance) | Accepted | 2026-03-13 |
 | [ADR-0003](./0003-package-manager-uv.md) | 패키지 매니저 uv 선택 | Accepted | 2026-03-13 |
 | [ADR-0004](./0004-notebook-jupyter.md) | 노트북 도구 Jupyter 선택 | Accepted | 2026-03-13 |
+| [ADR-0005](./0005-cache-format-selection.md) | 로컬 캐시 포맷 선택 (Parquet) | Accepted | 2026-03-13 |
+| [ADR-0006](./0006-agent-team-workflow.md) | 에이전트 팀 워크플로우 채택 (멀티 터미널 + 서브에이전트) | Accepted | 2026-03-13 |
 
 ---
 

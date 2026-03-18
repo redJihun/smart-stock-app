@@ -138,37 +138,7 @@ Changes:
 
 ## Docs Management
 
-```
-docs/
-  README.md                              # 전체 문서 인덱스 (필수)
-  work-logs/                             # 주차별 업무일지 + 장기 관리 문서
-    README.md
-    BACKLOG.md                           # 장기 예정 업무, 기술부채
-    NOTES.md                             # 아이디어, 메모, 참고 링크
-    {YYMMDD시작}-{YYMMDD종료}-W{주차}.md  # 주차별 업무일지
-  architecture-decision-records/         # ADR
-    README.md                            # ADR 인덱스 + 상태 목록
-    template.md
-    {NNNN}-{주제-kebab-case}.md          # 개별 ADR
-```
-
-문서 추가 시 갱신 대상:
-
-| 추가한 문서 | 함께 갱신할 인덱스 |
-|---|---|
-| ADR (`architecture-decision-records/*.md`) | `architecture-decision-records/README.md` + `docs/README.md` |
-| 주차 업무일지 (`work-logs/*.md`) | `work-logs/README.md` |
-| 일반 개발 문서 (`docs/*.md`) | `docs/README.md` |
-
-## ADR 작성 기준
-
-다음 조건 중 하나 이상 해당하면 ADR 작성을 제안한다:
-
-- 되돌리기 어려운 기술 결정 (라이브러리 선택, 아키텍처 패턴 등)
-- 여러 선택지를 비교해 채택한 결정
-- 나중에 맥락 없이 보면 이상하게 보일 수 있는 결정
-
-ADR 추가 후 두 인덱스(`architecture-decision-records/README.md`, `docs/README.md`)를 반드시 갱신한다.
+자세한 문서 구조, 갱신 규칙, ADR 기준 → `.claude/rules/docs-management.md` 참조
 
 ## Workflow
 
@@ -185,14 +155,22 @@ ADR 추가 후 두 인덱스(`architecture-decision-records/README.md`, `docs/RE
 - 작업이 완료되면 커밋 제안 → 사용자 실행
 - 컨텍스트가 충분하면 계속 작업 (세션 유지)
 - 필요시 `/compact` (컨텍스트 압축) 또는 `/clear` (새 세션 시작) 사용자 명령 대기
+- 에이전트 사이클에서의 세션 관리 타이밍 → `.claude/rules/task-cycle.md` 참조
 - **유의미한 대화 종료 후** CLAUDE.md 또는 MEMORY.md 갱신 제안
 
-## Worktree 활용
+## 에이전트 팀 워크플로우
 
-병렬 기능 개발이나 위험한 실험이 필요하면 `EnterWorktree`로 격리된 작업 공간 사용:
+자세한 세션 구성, 통신 채널, 패턴, Haiku 활용 기준, Worktree 활용 → `.claude/rules/agent-workflow.md` 참조
 
-- 실험적 변경이 메인 브랜치에 영향을 주지 않음
-- 격리된 환경에서 테스트 후 병합 가능
+**3단계 사이클 규칙** (계획/실행/검토 체크리스트, 커밋 생성 규칙, MEMORY.md 갱신 항목) → `.claude/rules/task-cycle.md` 참조
+
+**TASK.md 템플릿** → `docs/work-logs/TASK-TEMPLATE.md`
+**RESULT.md 템플릿** → `docs/work-logs/RESULT-TEMPLATE.md`
+
+핵심 요약:
+- 터미널1(Sonnet 관리자) → TASK.md 작성 → 터미널2(Haiku 실행자) → RESULT.md 보고
+- 구현 Agent는 `isolation: "worktree"` 로 격리 실행
+- 서브에이전트 최대 4~5개, Agent당 단일 책임
 
 ## 변경 범위 확인 원칙
 
@@ -214,3 +192,12 @@ ADR 추가 후 두 인덱스(`architecture-decision-records/README.md`, `docs/RE
 - [ ] **테스트**: `pytest` 통과 (해당 모듈)
 
 모든 항목이 통과할 때까지 수정 제안.
+
+## Compact Instructions
+
+`/compact` 실행 시 다음 정보를 우선 보존한다:
+
+- 현재 진행 중인 TASK 번호와 상태
+- 구현 완료된 파일 목록과 테스트 통과 여부
+- 미결 이슈 및 다음 단계
+- 아키텍처 결정 사항 (되돌리기 어려운 것)
