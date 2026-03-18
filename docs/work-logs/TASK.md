@@ -7,25 +7,24 @@
 
 ## 현재 작업
 
-### 작업 ID: TASK-008
-### 제목: 기술적 지표 라이브러리 구현 (FR-101)
+### 작업 ID: TASK-009
+### 제목: 복합 전략 프레임워크 구현 (FR-102)
 
 ### 배경
 
-Phase 0에서 SMA / RSI / MACD / Bollinger 계산 로직이 각 전략 클래스 내부에 인라인으로 구현되어 있다.
-PRD FR-101은 이 지표들을 **독립 함수**로 분리하여 재사용·조합이 가능하도록 요구한다.
-`src/smart_stock/analysis/` 디렉토리는 현재 빈 `__init__.py`만 존재한다.
+Phase 1 FR-102 요구사항.
+현재 각 전략(SMA/RSI/MACD/Bollinger)은 독립적으로 이진 시그널(0/1)을 생성한다.
+여러 전략의 시그널을 가중 결합하여 노이즈를 줄이고 다중 지표 기반의 더 강건한 매매 시그널을 만드는 `CompositeStrategy`가 필요하다.
 
-FR-102(복합 전략), FR-104(비교 대시보드)가 이 라이브러리에 의존하므로 Phase 1 최우선 작업이다.
+**기존 전략 클래스(BaseStrategy 하위)는 수정하지 않는다.**
 
 ---
 
 ## 참고 파일 (먼저 읽을 것)
 
-- `src/smart_stock/strategies/rsi_strategy.py` — RSI Wilder's EWM 패턴 참조
-- `src/smart_stock/strategies/macd_strategy.py` — EMA 계산 패턴 참조
-- `src/smart_stock/strategies/bollinger_strategy.py` — rolling std 패턴 참조
-- `src/smart_stock/analysis/__init__.py` — 현재 빈 파일 (교체 대상)
+- `src/smart_stock/strategies/base_strategy.py` — BaseStrategy ABC, validate_dataframe
+- `src/smart_stock/strategies/sma_crossover.py` — 전략 클래스 참조 패턴
+- `src/smart_stock/strategies/__init__.py` — 현재 재노출 목록 (CompositeStrategy 추가 대상)
 - `.claude/rules/task-cycle.md` — 공통 코드 제약
 
 ---
@@ -40,134 +39,111 @@ FR-102(복합 전략), FR-104(비교 대시보드)가 이 라이브러리에 의
 
 ---
 
-#### Agent-구현indicators → `src/smart_stock/analysis/indicators.py` (신규) + `src/smart_stock/analysis/__init__.py` (교체)
+#### Agent-구현composite → `src/smart_stock/strategies/composite.py` (신규) + `src/smart_stock/strategies/__init__.py` (갱신)
 
-**구현할 함수 8개 (지표 11개):**
+**구현할 클래스:**
 
 ```python
-# ── 추세 (Trend) ──────────────────────────────────────────────────────────
-def sma(close: pd.Series, window: int) -> pd.Series:
-    """단순 이동평균(SMA)."""
-    # close.rolling(window).mean()
+# src/smart_stock/strategies/composite.py
 
-def ema(close: pd.Series, span: int) -> pd.Series:
-    """지수 이동평균(EMA)."""
-    # close.ewm(span=span, adjust=False).mean()
+class CompositeStrategy:
+    """여러 전략의 시그널을 가중 결합하는 복합 전략.
 
-# ── 모멘텀 (Momentum) ─────────────────────────────────────────────────────
-def rsi(close: pd.Series, period: int = 14) -> pd.Series:
-    """RSI (Wilder's Smoothing).
-    - diff = close.diff()
-    - gain = diff.clip(lower=0).ewm(alpha=1/period, adjust=False).mean()
-    - loss = (-diff.clip(upper=0)).ewm(alpha=1/period, adjust=False).mean()
-    - rs = gain / loss (loss=0이면 RSI=100)
-    - RSI = 100 - (100 / (1 + rs))
+    Parameters
+    ----------
+    strategies : list[tuple[BaseStrategy, float]]
+        (전략 인스턴스, 가중치) 쌍의 목록. 가중치는 양수여야 한다.
+    threshold : float, optional
+        generate_signals()에서 이진 시그널로 변환할 임계값 (기본값: 0.5).
+        시그널 강도 >= threshold 이면 1, 미만이면 0.
+    name : str, optional
+        전략 이름 (기본값: "composite").
+
+    Raises
+    ------
+    ValueError
+        strategies가 비어 있는 경우.
+        가중치에 양수가 아닌 값이 포함된 경우.
+        threshold가 0~1 범위를 벗어난 경우.
     """
 
-def macd(
-    close: pd.Series,
-    fast: int = 12,
-    slow: int = 26,
-    signal: int = 9,
-) -> pd.DataFrame:
-    """MACD (macd, signal, histogram 컬럼 반환).
-    - macd_line = ema(fast) - ema(slow)
-    - signal_line = macd_line.ewm(span=signal, adjust=False).mean()
-    - histogram = macd_line - signal_line
-    """
+    def generate_signals_strength(self, df: pd.DataFrame) -> pd.Series:
+        """연속 시그널 강도를 반환한다 (0.0 ~ 1.0).
 
-def stochastic(
-    high: pd.Series,
-    low: pd.Series,
-    close: pd.Series,
-    k: int = 14,
-    d: int = 3,
-) -> pd.DataFrame:
-    """스토캐스틱 오실레이터 (k, d 컬럼 반환).
-    - lowest_low = low.rolling(k).min()
-    - highest_high = high.rolling(k).max()
-    - K = (close - lowest_low) / (highest_high - lowest_low) * 100
-    - D = K.rolling(d).mean()
-    """
+        각 전략의 이진 시그널(0/1)을 가중 평균하여 시그널 강도를 계산한다.
+        """
+        # total_weight = sum(w for _, w in self.strategies)
+        # weighted_sum = sum(w * strategy.generate_signals(df).astype(float) for strategy, w in ...)
+        # return weighted_sum / total_weight
 
-# ── 변동성 (Volatility) ───────────────────────────────────────────────────
-def bollinger_bands(
-    close: pd.Series,
-    window: int = 20,
-    std_dev: float = 2.0,
-) -> pd.DataFrame:
-    """볼린저 밴드 (middle, upper, lower, bandwidth 컬럼 반환).
-    - middle = close.rolling(window).mean()
-    - std = close.rolling(window).std()
-    - upper = middle + std_dev * std
-    - lower = middle - std_dev * std
-    - bandwidth = (upper - lower) / middle
-    """
+    def generate_signals(self, df: pd.DataFrame) -> pd.Series:
+        """이진 시그널을 반환한다 ({0, 1}).
 
-def atr(
-    high: pd.Series,
-    low: pd.Series,
-    close: pd.Series,
-    period: int = 14,
-) -> pd.Series:
-    """평균 실제 범위(ATR).
-    - tr = max(high-low, |high-prev_close|, |low-prev_close|)
-    - ATR = tr.ewm(alpha=1/period, adjust=False).mean()
-    """
-
-# ── 거래량 (Volume) ───────────────────────────────────────────────────────
-def obv(close: pd.Series, volume: pd.Series) -> pd.Series:
-    """온밸런스 볼륨(OBV).
-    - direction = close.diff().apply(lambda x: 1 if x > 0 else (-1 if x < 0 else 0))
-    - OBV = (direction * volume).cumsum()
-    """
+        generate_signals_strength() >= threshold 이면 1, 미만이면 0.
+        """
 ```
 
-**파라미터 유효성 검증 (모든 함수 공통):**
-- `window`, `period`, `span`, `k`, `d` ≤ 0 이면 `ValueError` 발생
+**파라미터 유효성 검증:**
+- `strategies`가 빈 리스트이면 `ValueError`
+- 가중치에 `<= 0` 값이 있으면 `ValueError`
+- `threshold`가 `[0.0, 1.0]` 범위를 벗어나면 `ValueError`
 
-**`__init__.py` 재노출 목록:**
+**`__init__.py` 갱신:**
 ```python
-from smart_stock.analysis.indicators import (
-    atr, bollinger_bands, ema, macd, obv, rsi, sma, stochastic,
-)
-__all__ = ["atr", "bollinger_bands", "ema", "macd", "obv", "rsi", "sma", "stochastic"]
+from smart_stock.strategies.composite import CompositeStrategy
+
+# __all__에 "CompositeStrategy" 알파벳순 위치에 추가
 ```
 
 파일 단위 검증:
 ```bash
-uv run ruff check src/smart_stock/analysis/ && uv run mypy src/smart_stock/analysis/ --strict
+uv run ruff check src/smart_stock/strategies/composite.py src/smart_stock/strategies/__init__.py
+uv run mypy src/smart_stock/strategies/composite.py src/smart_stock/strategies/__init__.py --strict
 ```
 
 ---
 
-#### Agent-구현tests → `tests/test_indicators.py` (신규)
+#### Agent-구현tests → `tests/test_composite_strategy.py` (신규)
 
 **테스트 구조:**
 
 ```python
-# Fixtures
-def _make_ohlcv(rows: int = 60) -> pd.DataFrame:
-    """60일치 OHLCV 샘플 데이터 (충분한 warm-up 확보)."""
-    # pd.date_range + 랜덤 없이 단조 증가/진동 값으로 구성
+# 공용 헬퍼: _make_ohlcv(rows=60) — 60일치 OHLCV DataFrame
+# Fixtures: sample_df, sma_strategy, rsi_strategy, macd_strategy
 
-# 테스트 클래스
-class TestSMA:          # sma — 반환 타입, 길이, NaN 범위
-class TestEMA:          # ema — 반환 타입, 길이
-class TestRSI:          # rsi — 범위 [0,100], 0 나누기 안전성
-class TestMACD:         # macd — 컬럼명, 길이, histogram = macd - signal
-class TestStochastic:   # stochastic — 컬럼명, K 범위 [0,100]
-class TestBollingerBands:  # bollinger_bands — 컬럼명, upper >= middle >= lower
-class TestATR:          # atr — 양수 값, 길이
-class TestOBV:          # obv — 반환 타입, 누적합 성질
-class TestValidation:   # 파라미터 ≤ 0 → ValueError (각 함수별 1개)
+class TestCompositeStrategyInit:
+    # strategies 빈 리스트 → ValueError
+    # 가중치 <= 0 → ValueError
+    # threshold 범위 초과 → ValueError
+    # 정상 생성 확인
+
+class TestGenerateSignalsStrength:
+    # 반환 타입이 pd.Series인지 확인
+    # 길이가 입력 df와 동일한지 확인
+    # 값이 [0.0, 1.0] 범위인지 확인
+    # 단일 전략(가중치 1.0)이면 해당 전략 시그널과 동일한지 확인
+    # 모든 전략이 1 시그널이면 강도=1.0인지 확인
+    # 모든 전략이 0 시그널이면 강도=0.0인지 확인
+
+class TestGenerateSignals:
+    # 반환 타입이 pd.Series인지 확인
+    # 반환값이 0 또는 1만 포함하는지 확인 (이진)
+    # threshold=0.0이면 항상 1인지 확인
+    # threshold=1.0이면 항상 0인지 확인 (모든 전략이 동시에 1이 아닌 경우)
+    # 가중치 변경 시 시그널이 달라지는지 확인
+
+class TestCompositeWithRealStrategies:
+    # SMA + RSI 결합 — 정상 실행 확인
+    # 3개 전략 결합 — 정상 실행 확인
+    # 인덱스가 입력 df와 동일한지 확인
 ```
 
-**기대 테스트 수: 20개 이상**
+**기대 테스트 수: 15개 이상**
 
 파일 단위 검증:
 ```bash
-uv run ruff check tests/test_indicators.py && uv run mypy tests/test_indicators.py --strict
+uv run ruff check tests/test_composite_strategy.py
+uv run mypy tests/test_composite_strategy.py --strict
 ```
 
 ---
@@ -177,10 +153,10 @@ uv run ruff check tests/test_indicators.py && uv run mypy tests/test_indicators.
 #### Agent-검증
 
 ```bash
-uv run ruff check src/smart_stock/analysis/ tests/test_indicators.py
-uv run ruff format src/smart_stock/analysis/ tests/test_indicators.py
-uv run mypy src/smart_stock/analysis/ --strict
-uv run pytest tests/test_indicators.py -v
+uv run ruff check src/smart_stock/strategies/composite.py src/smart_stock/strategies/__init__.py tests/test_composite_strategy.py
+uv run ruff format src/smart_stock/strategies/composite.py src/smart_stock/strategies/__init__.py tests/test_composite_strategy.py
+uv run mypy src/smart_stock/strategies/ --strict
+uv run pytest tests/test_composite_strategy.py -v
 uv run pytest tests/ -v
 ```
 
@@ -191,12 +167,12 @@ uv run pytest tests/ -v
 
 ## 완료 기준
 
-- [ ] `src/smart_stock/analysis/indicators.py` 신규 생성 (8개 함수, 파라미터 검증 포함)
-- [ ] `src/smart_stock/analysis/__init__.py` 갱신 (8개 함수 재노출)
-- [ ] `tests/test_indicators.py` 신규 생성 (20개 이상 테스트)
+- [ ] `src/smart_stock/strategies/composite.py` 신규 생성 (`CompositeStrategy` 클래스)
+- [ ] `src/smart_stock/strategies/__init__.py` 갱신 (`CompositeStrategy` 추가)
+- [ ] `tests/test_composite_strategy.py` 신규 생성 (15개 이상 테스트)
 - [ ] ruff check 통과
 - [ ] ruff format 적용
 - [ ] mypy --strict 통과
 - [ ] pytest 신규 테스트 전체 통과
-- [ ] pytest 전체 테스트 스위트 통과 (기존 114개 + 신규)
+- [ ] pytest 전체 테스트 스위트 통과 (기존 159개 + 신규)
 - [ ] `RESULT.md` 갱신 완료
