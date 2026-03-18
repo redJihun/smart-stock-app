@@ -26,6 +26,7 @@
 | [ADR-0004](./architecture-decision-records/0004-notebook-jupyter.md) | 노트북 도구 Jupyter 선택 | Accepted |
 | [ADR-0005](./architecture-decision-records/0005-cache-format-selection.md) | 로컬 캐시 포맷 선택 (Parquet) | Accepted |
 | [ADR-0006](./architecture-decision-records/0006-agent-team-workflow.md) | 에이전트 팀 워크플로우 채택 (멀티 터미널 + 서브에이전트) | Accepted |
+| [ADR-0007](./architecture-decision-records/0007-kis-api-intraday.md) | 한국 분봉 데이터 소스로 KIS API 선택 | Accepted |
 
 ---
 
