@@ -115,7 +115,8 @@ def test_normalize_columns_drops_extra_columns() -> None:
             "Extra": [999],
         }
     )
-    result = normalize_columns(df, {c: c for c in ["Open", "High", "Low", "Close", "Volume"]})
+    cols = ["Open", "High", "Low", "Close", "Volume"]
+    result = normalize_columns(df, {c: c for c in cols})
     assert "Extra" not in result.columns
 
 
@@ -127,7 +128,9 @@ def test_normalize_columns_drops_extra_columns() -> None:
 def test_fetch_stock_kr_routes_to_fetch_kr(sample_df: pd.DataFrame) -> None:
     with patch("smart_stock.data.loader._fetch_kr", return_value=sample_df) as mock_kr:
         result = fetch_stock("005930", "2024-01-01", "2024-12-31", market=Market.KR)
-        mock_kr.assert_called_once_with("005930", "2024-01-01", "2024-12-31")
+        mock_kr.assert_called_once_with(
+            "005930", "2024-01-01", "2024-12-31", interval="1d"
+        )
     assert validate_schema(result)
 
 
@@ -135,7 +138,9 @@ def test_fetch_stock_us_routes_to_fetch_foreign(sample_df: pd.DataFrame) -> None
     target = "smart_stock.data.loader._fetch_foreign"
     with patch(target, return_value=sample_df) as mock_foreign:
         result = fetch_stock("AAPL", "2024-01-01", "2024-12-31", market=Market.US)
-        mock_foreign.assert_called_once_with("AAPL", "2024-01-01", "2024-12-31")
+        mock_foreign.assert_called_once_with(
+            "AAPL", "2024-01-01", "2024-12-31", interval="1d"
+        )
     assert validate_schema(result)
 
 
@@ -177,3 +182,50 @@ def test_fetch_foreign_calls_yfinance_download(sample_df: pd.DataFrame) -> None:
         result = _fetch_foreign("AAPL", "2024-01-01", "2024-12-31")
     mock_yf.download.assert_called_once()
     assert validate_schema(result)
+
+
+# ---------------------------------------------------------------------------
+# loader — interval 파라미터 (분봉 데이터)
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_stock_kr_intraday_calls_kis(sample_df: pd.DataFrame) -> None:
+    """interval="5m" 시 _fetch_kr이 kis_client 호출 경로를 사용한다."""
+    # 분봉 데이터는 kis_client를 통해 조회되므로,
+    # kis_client.fetch_kr_intraday이 호출되는지 확인
+    with patch("smart_stock.data.kis_client.fetch_kr_intraday") as mock_kis:
+        mock_kis.return_value = sample_df
+
+        result = _fetch_kr("005930", "2024-01-01", "2024-01-01", interval="5m")
+        # kis_client.fetch_kr_intraday가 호출되어야 함
+        mock_kis.assert_called_once()
+        assert validate_schema(result)
+
+
+def test_fetch_stock_foreign_interval_passed(sample_df: pd.DataFrame) -> None:
+    """interval이 yf.download에 전달되는지 확인."""
+    mock_yf = MagicMock()
+    mock_yf.download.return_value = sample_df
+    with patch.dict("sys.modules", {"yfinance": mock_yf}):
+        _fetch_foreign("AAPL", "2024-01-01", "2024-12-31", interval="1h")
+    # interval 파라미터가 전달되었는지 확인
+    call_kwargs = mock_yf.download.call_args[1]
+    assert call_kwargs.get("interval") == "1h"
+
+
+def test_cache_path_includes_interval() -> None:
+    """cache_path 파일명에 interval이 포함되는지 검증한다."""
+    from smart_stock.data.cache import cache_path
+
+    path = cache_path("005930", "KR", "2024-01-01", "2024-12-31", "5m")
+    assert "5m" in path.name
+
+
+def test_fetch_stock_cached_interval_default() -> None:
+    """fetch_stock_cached의 interval 기본값이 '1d'인지 검증한다."""
+    from inspect import signature
+
+    from smart_stock.data.cache import fetch_stock_cached
+
+    sig = signature(fetch_stock_cached)
+    assert sig.parameters["interval"].default == "1d"
