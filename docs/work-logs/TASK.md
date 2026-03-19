@@ -7,144 +7,155 @@
 
 ## 현재 작업
 
-### 작업 ID: TASK-009
-### 제목: 복합 전략 프레임워크 구현 (FR-102)
+### 작업 ID: TASK-010
+### 제목: 전략 비교 대시보드 노트북 구현 (FR-104)
 
 ### 배경
 
-Phase 1 FR-102 요구사항.
-현재 각 전략(SMA/RSI/MACD/Bollinger)은 독립적으로 이진 시그널(0/1)을 생성한다.
-여러 전략의 시그널을 가중 결합하여 노이즈를 줄이고 다중 지표 기반의 더 강건한 매매 시그널을 만드는 `CompositeStrategy`가 필요하다.
+Phase 1 FR-104 요구사항.
+FR-101(지표 라이브러리), FR-102(CompositeStrategy), FR-103(분봉 수집)이 모두 완료되어
+이를 종합 활용하는 비교 대시보드가 필요하다.
+기존 `02-backtest-tracking.ipynb`는 기본 비교만 있으나, 여기서는
+5개 전략의 성과 비교 + 기술적 지표 오버레이 + 파라미터 민감도 분석까지 포함한
+더 체계적인 분석 노트북을 구현한다.
 
-**기존 전략 클래스(BaseStrategy 하위)는 수정하지 않는다.**
+**소스 코드 수정 없음** — 기존 모듈 재사용만.
 
 ---
 
 ## 참고 파일 (먼저 읽을 것)
 
-- `src/smart_stock/strategies/base_strategy.py` — BaseStrategy ABC, validate_dataframe
-- `src/smart_stock/strategies/sma_crossover.py` — 전략 클래스 참조 패턴
-- `src/smart_stock/strategies/__init__.py` — 현재 재노출 목록 (CompositeStrategy 추가 대상)
-- `.claude/rules/task-cycle.md` — 공통 코드 제약
+- `notebooks/02-backtest-tracking.ipynb` — 성과 테이블·포트폴리오 곡선·시그널 시각화 패턴
+- `src/smart_stock/strategies/__init__.py` — 사용 가능한 전략 클래스 확인
+- `src/smart_stock/analysis/__init__.py` — sma, rsi, bollinger_bands 함수 확인
+- `src/smart_stock/backtesting/pipeline.py` — run_and_track() 시그니처 확인
+- `.claude/rules/task-cycle.md` — 실행자 금지 행동 확인
 
 ---
 
 ## 구현 명세
 
-> 공통 제약: `from __future__ import annotations` 첫 줄 / pandas만 사용(numpy 직접 금지, math 허용) / 파일 500줄 이내 / mypy strict / 한국어 docstring (NumPy 스타일)
+> 노트북 작업이므로 ruff/mypy/pytest 대상 아님. 검증은 `jupyter nbconvert --execute` 사용.
 
 ---
 
-### Phase 2: 구현 (2개 Agent — 병렬 실행 가능)
+### Phase 2: 구현 (단일 Agent)
 
 ---
 
-#### Agent-구현composite → `src/smart_stock/strategies/composite.py` (신규) + `src/smart_stock/strategies/__init__.py` (갱신)
+#### Agent-구현dashboard → `notebooks/03-strategy-comparison.ipynb` (신규)
 
-**구현할 클래스:**
+**노트북 셀 구성 (~20셀)**:
 
-```python
-# src/smart_stock/strategies/composite.py
+```
+셀-1:  [설정] import + matplotlib rcParams
+       import matplotlib.pyplot as plt, matplotlib.ticker as mticker
+       plt.rcParams["figure.figsize"] = (14, 5)
+       plt.rcParams["axes.grid"] = True
+       import warnings; warnings.filterwarnings("ignore")
 
-class CompositeStrategy:
-    """여러 전략의 시그널을 가중 결합하는 복합 전략.
+셀-2:  [파라미터] 상수 정의
+       TICKER = "005930"       # 삼성전자
+       START = "2023-01-01"
+       END = "2024-12-31"
+       INITIAL_CAPITAL = 1_000_000
 
-    Parameters
-    ----------
-    strategies : list[tuple[BaseStrategy, float]]
-        (전략 인스턴스, 가중치) 쌍의 목록. 가중치는 양수여야 한다.
-    threshold : float, optional
-        generate_signals()에서 이진 시그널로 변환할 임계값 (기본값: 0.5).
-        시그널 강도 >= threshold 이면 1, 미만이면 0.
-    name : str, optional
-        전략 이름 (기본값: "composite").
+셀-3:  [데이터] fetch_stock_cached() 로드 + 기간/형태 출력
+       df = fetch_stock_cached(TICKER, start=START, end=END)
+       print(f"기간: {df.index[0].date()} ~ {df.index[-1].date()}, {len(df)}행")
 
-    Raises
-    ------
-    ValueError
-        strategies가 비어 있는 경우.
-        가중치에 양수가 아닌 값이 포함된 경우.
-        threshold가 0~1 범위를 벗어난 경우.
-    """
+셀-4:  [전략 초기화] 5개 전략 dict 구성
+       sma_st = SMAcrossoverStrategy(short_window=5, long_window=20)
+       rsi_st = RSIStrategy(period=14)
+       macd_st = MACDStrategy()
+       bb_st = BollingerBandStrategy()
+       composite_st = CompositeStrategy(strategies=[(sma_st, 0.5), (rsi_st, 0.5)])
+       strategies = {
+           "SMA(5,20)": sma_st,
+           "RSI(14)": rsi_st,
+           "MACD": macd_st,
+           "Bollinger(20,2)": bb_st,
+           "Composite(SMA+RSI)": composite_st,
+       }
 
-    def generate_signals_strength(self, df: pd.DataFrame) -> pd.Series:
-        """연속 시그널 강도를 반환한다 (0.0 ~ 1.0).
+셀-5:  [백테스트] logger.clear() → 전략별 run_and_track() 실행
+       logger = SignalLogger(); logger.clear()
+       results = {}
+       for name, strategy in strategies.items():
+           engine = BacktestEngine(initial_capital=INITIAL_CAPITAL)
+           result = run_and_track(df, strategy, ticker=TICKER, engine=engine, logger=logger)
+           results[name] = result
+           print(f"[{name}] 수익률: {result.total_return:.2f}%, MDD: {result.mdd:.2f}%,
+                 샤프: {result.sharpe_ratio:.2f}, 승률: {result.win_rate:.1f}%, 거래: {result.trade_count}회")
 
-        각 전략의 이진 시그널(0/1)을 가중 평균하여 시그널 강도를 계산한다.
-        """
-        # total_weight = sum(w for _, w in self.strategies)
-        # weighted_sum = sum(w * strategy.generate_signals(df).astype(float) for strategy, w in ...)
-        # return weighted_sum / total_weight
+셀-6:  [성과 테이블] pd.DataFrame 비교표 → display()
+       (02-backtest-tracking 패턴 재사용)
 
-    def generate_signals(self, df: pd.DataFrame) -> pd.Series:
-        """이진 시그널을 반환한다 ({0, 1}).
+셀-7:  [시각화1] 포트폴리오 가치 곡선 비교
+       fig, ax = plt.subplots()
+       for name, result in results.items():
+           ax.plot(result.portfolio.index, result.portfolio / INITIAL_CAPITAL, label=name)
+       ax.axhline(1.0, color="gray", linestyle="--", alpha=0.5, label="원금")
+       ax.set_title("전략별 포트폴리오 가치 (초기 자본 = 1)")
+       ax.set_ylabel("배율")
+       ax.legend(loc="upper left")
+       plt.tight_layout(); plt.show()
 
-        generate_signals_strength() >= threshold 이면 1, 미만이면 0.
-        """
+셀-8:  [시각화2] 드로우다운 비교
+       drawdown 계산: dd = portfolio / portfolio.cummax() - 1
+       모든 전략의 dd를 동일 axes에 plot
+
+셀-9:  [기술적 지표] 종가 + SMA(20) + SMA(60) 오버레이
+       from smart_stock.analysis import sma
+       sma20 = sma(df["Close"], 20)
+       sma60 = sma(df["Close"], 60)
+       ax.plot(종가, SMA20, SMA60 각각 색상 구분)
+
+셀-10: [기술적 지표] RSI(14) 서브플롯
+       fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True, figsize=(14, 8), gridspec_kw={"height_ratios": [3, 1]})
+       ax1: 종가, ax2: RSI + 30/70 기준선 (axhline)
+
+셀-11: [기술적 지표] 볼린저 밴드 오버레이
+       from smart_stock.analysis import bollinger_bands
+       bb = bollinger_bands(df["Close"])
+       ax.fill_between(bb.index, bb["lower"], bb["upper"], alpha=0.2, color="gray", label="밴드")
+       ax.plot(bb["middle"], label="중간선")
+       ax.plot(df["Close"], label="종가")
+
+셀-12: [파라미터 스캔] SMA window 조합 성과 표
+       short_windows = [5, 10, 20]
+       long_windows = [20, 50, 60]
+       scan 결과를 pd.DataFrame으로 구성 (유효 조합: short < long 만)
+       display(scan_results)
+
+셀-13: [CompositeStrategy 가중치 민감도]
+       가중치 비율 3가지: (0.3, 0.7), (0.5, 0.5), (0.7, 0.3)
+       각각 BacktestEngine.run()으로 성과 비교 표
+
+셀-14: [신호 시각화] 최고 샤프비율 전략의 매수/매도 시그널 오버레이
+       best_name = max(results, key=lambda n: results[n].sharpe_ratio)
+       signals_df = logger.load()
+       best_signals = signals_df[signals_df["strategy"] == best_name]
+       (02-backtest-tracking.ipynb 셀-13 패턴 재사용)
+
+셀-15: [결론] 마크다운 텍스트 셀
+       # 분석 요약
+       전략별 강/약점 표 (텍스트)
 ```
 
-**파라미터 유효성 검증:**
-- `strategies`가 빈 리스트이면 `ValueError`
-- 가중치에 `<= 0` 값이 있으면 `ValueError`
-- `threshold`가 `[0.0, 1.0]` 범위를 벗어나면 `ValueError`
-
-**`__init__.py` 갱신:**
-```python
-from smart_stock.strategies.composite import CompositeStrategy
-
-# __all__에 "CompositeStrategy" 알파벳순 위치에 추가
-```
+**주의사항**:
+- `logger.clear()` 는 셀-5 시작 전에만 1회 호출 — 중복 기록 방지
+- `CompositeStrategy` 초기화 시 동일 인스턴스(`sma_st`, `rsi_st`) 재사용 가능
+- 파라미터 스캔(셀-12)은 `SignalLogger` 없이 `BacktestEngine.run()` 직접 사용
 
 파일 단위 검증:
 ```bash
-uv run ruff check src/smart_stock/strategies/composite.py src/smart_stock/strategies/__init__.py
-uv run mypy src/smart_stock/strategies/composite.py src/smart_stock/strategies/__init__.py --strict
+uv run jupyter nbconvert --to notebook --execute \
+  --ExecutePreprocessor.timeout=120 \
+  notebooks/03-strategy-comparison.ipynb \
+  --output notebooks/03-strategy-comparison.ipynb
 ```
-
----
-
-#### Agent-구현tests → `tests/test_composite_strategy.py` (신규)
-
-**테스트 구조:**
-
-```python
-# 공용 헬퍼: _make_ohlcv(rows=60) — 60일치 OHLCV DataFrame
-# Fixtures: sample_df, sma_strategy, rsi_strategy, macd_strategy
-
-class TestCompositeStrategyInit:
-    # strategies 빈 리스트 → ValueError
-    # 가중치 <= 0 → ValueError
-    # threshold 범위 초과 → ValueError
-    # 정상 생성 확인
-
-class TestGenerateSignalsStrength:
-    # 반환 타입이 pd.Series인지 확인
-    # 길이가 입력 df와 동일한지 확인
-    # 값이 [0.0, 1.0] 범위인지 확인
-    # 단일 전략(가중치 1.0)이면 해당 전략 시그널과 동일한지 확인
-    # 모든 전략이 1 시그널이면 강도=1.0인지 확인
-    # 모든 전략이 0 시그널이면 강도=0.0인지 확인
-
-class TestGenerateSignals:
-    # 반환 타입이 pd.Series인지 확인
-    # 반환값이 0 또는 1만 포함하는지 확인 (이진)
-    # threshold=0.0이면 항상 1인지 확인
-    # threshold=1.0이면 항상 0인지 확인 (모든 전략이 동시에 1이 아닌 경우)
-    # 가중치 변경 시 시그널이 달라지는지 확인
-
-class TestCompositeWithRealStrategies:
-    # SMA + RSI 결합 — 정상 실행 확인
-    # 3개 전략 결합 — 정상 실행 확인
-    # 인덱스가 입력 df와 동일한지 확인
-```
-
-**기대 테스트 수: 15개 이상**
-
-파일 단위 검증:
-```bash
-uv run ruff check tests/test_composite_strategy.py
-uv run mypy tests/test_composite_strategy.py --strict
-```
+오류 발생 시 해당 셀 수정 후 재실행.
 
 ---
 
@@ -153,26 +164,28 @@ uv run mypy tests/test_composite_strategy.py --strict
 #### Agent-검증
 
 ```bash
-uv run ruff check src/smart_stock/strategies/composite.py src/smart_stock/strategies/__init__.py tests/test_composite_strategy.py
-uv run ruff format src/smart_stock/strategies/composite.py src/smart_stock/strategies/__init__.py tests/test_composite_strategy.py
-uv run mypy src/smart_stock/strategies/ --strict
-uv run pytest tests/test_composite_strategy.py -v
-uv run pytest tests/ -v
+# 노트북 전체 실행 검증 (커널 재시작 후 순서대로 실행)
+uv run jupyter nbconvert --to notebook --execute \
+  --ExecutePreprocessor.timeout=120 \
+  notebooks/03-strategy-comparison.ipynb \
+  --output notebooks/03-strategy-comparison.ipynb
 ```
 
-오류 발생 시 해당 파일 수정 후 재실행.
+성공 기준:
+- 오류 없이 전체 셀 실행 완료
+- 성과 비교 테이블 출력됨
+- 최소 4개 시각화 차트 생성됨
+
 결과를 `RESULT.md`의 각 섹션에 기록.
 
 ---
 
 ## 완료 기준
 
-- [ ] `src/smart_stock/strategies/composite.py` 신규 생성 (`CompositeStrategy` 클래스)
-- [ ] `src/smart_stock/strategies/__init__.py` 갱신 (`CompositeStrategy` 추가)
-- [ ] `tests/test_composite_strategy.py` 신규 생성 (15개 이상 테스트)
-- [ ] ruff check 통과
-- [ ] ruff format 적용
-- [ ] mypy --strict 통과
-- [ ] pytest 신규 테스트 전체 통과
-- [ ] pytest 전체 테스트 스위트 통과 (기존 159개 + 신규)
+- [ ] `notebooks/03-strategy-comparison.ipynb` 신규 생성
+- [ ] 5개 전략 성과 비교 테이블 출력
+- [ ] 포트폴리오 가치 곡선 + 드로우다운 비교 시각화
+- [ ] 기술적 지표 오버레이 차트 (SMA, RSI, 볼린저 밴드)
+- [ ] SMA 파라미터 스캔 결과 표
+- [ ] 노트북 오류 없이 전체 실행 완료
 - [ ] `RESULT.md` 갱신 완료
