@@ -7,27 +7,22 @@
 
 ## 현재 작업
 
-### 작업 ID: TASK-014
-### 제목: 페이퍼 트레이딩 구현 (FR-204)
+### 작업 ID: TASK-015
+### 제목: 웹 대시보드 구현 (FR-206)
 
 ### 배경
 
-FR-203(실시간 데이터 피드)이 완료되어 전제 조건이 갖추어졌다.
-FR-204는 DataFeed로 수신한 실시간 캔들에 전략을 적용하고,
-가상 포트폴리오로 매수/매도를 시뮬레이션하는 PaperTrader를 구현한다.
-이것이 Go-Live Gate 데이터(시그널 500건, 3개월 기간) 축적의 핵심 단계다.
+FR-204(페이퍼 트레이딩)가 완료되어 SignalLogger가 시그널을 Parquet 파일에 기록하고 있다.
+FR-206은 이 데이터를 Streamlit 기반 웹 대시보드로 시각화하여,
+페르소나 B(트레이더)와 D(UI 개발자)가 성과를 모니터링할 수 있는 환경을 제공한다.
 
 ---
 
 ## 참고 파일 (먼저 읽을 것)
 
-- `src/smart_stock/data/feed.py` — DataFeed ABC, `__exit__` 시그니처 패턴
-- `src/smart_stock/backtesting/engine.py` — `initial_capital` 검증, PositionSizer 연동 패턴
-- `src/smart_stock/backtesting/cost_model.py` — TradingCost 필드 및 메서드
-- `src/smart_stock/backtesting/position_sizer.py` — PositionSizer ABC, calculate() 계약
-- `src/smart_stock/tracking/logger.py` — SignalRecord 필드 구조, SignalLogger.log()
-- `src/smart_stock/strategies/base_strategy.py` — BaseStrategy ABC
-- `tests/test_data_feed.py` — `_on_candle()` 직접 호출 테스트 패턴
+- `src/smart_stock/tracking/logger.py` — SignalRecord 필드, 저장 경로 (`data/tracking/signals.parquet`)
+- `src/smart_stock/tracking/tracker.py` — OutcomeRecord 필드, 저장 경로 (`data/tracking/outcomes.parquet`)
+- `pyproject.toml` — 의존성 추가 위치 확인 (`[project] dependencies` 섹션)
 - `.claude/rules/task-cycle.md` — 실행자 금지 행동 확인
 
 ---
@@ -35,6 +30,7 @@ FR-204는 DataFeed로 수신한 실시간 캔들에 전략을 적용하고,
 ## 구현 명세
 
 > 공통 제약: `.claude/rules/task-cycle.md` 참조 (from __future__, 500줄, mypy strict 등)
+> **핵심 원칙**: `data.py`(순수 함수, mypy strict + pytest 대상) / `app.py`(Streamlit, mypy 적용 제외) 분리
 
 ---
 
@@ -42,331 +38,429 @@ FR-204는 DataFeed로 수신한 실시간 캔들에 전략을 적용하고,
 
 ---
 
-#### Agent-구현trading → 3개 파일 신규 생성
+#### Agent-구현dashboard → 5개 파일 신규/수정
 
 ---
 
-##### 1. `src/smart_stock/trading/__init__.py` (신규)
+##### 1. `pyproject.toml` (수정)
 
-```python
-"""페이퍼 트레이딩 모듈."""
-
-from smart_stock.trading.paper_trader import PaperTrader
-
-__all__ = ["PaperTrader"]
+`[project] dependencies` 섹션에 추가:
+```toml
+"streamlit>=1.32",
 ```
 
 ---
 
-##### 2. `src/smart_stock/trading/paper_trader.py` (신규, ~180줄)
+##### 2. `src/smart_stock/dashboard/__init__.py` (신규)
+
+```python
+"""웹 대시보드 모듈."""
+
+from smart_stock.dashboard.data import (
+    DashboardMetrics,
+    compute_metrics,
+    compute_strategy_summary,
+    load_outcomes,
+    load_signals,
+)
+
+__all__ = [
+    "DashboardMetrics",
+    "compute_metrics",
+    "compute_strategy_summary",
+    "load_outcomes",
+    "load_signals",
+]
+```
+
+---
+
+##### 3. `src/smart_stock/dashboard/data.py` (신규, ~130줄)
 
 ```python
 from __future__ import annotations
 
-import pandas as pd
+from dataclasses import dataclass
+from pathlib import Path
 
-from smart_stock.backtesting.cost_model import TradingCost
-from smart_stock.backtesting.position_sizer import PositionSizer
-from smart_stock.data.feed import DataFeed
-from smart_stock.strategies.base_strategy import BaseStrategy
-from smart_stock.tracking.logger import SignalLogger, SignalRecord
+import pandas as pd
 ```
 
-**PaperTrader 클래스**:
-
+**DEFAULT_LOG_DIR**:
 ```python
-class PaperTrader:
-    """가상 포트폴리오 기반 페이퍼 트레이딩 실행기.
+DEFAULT_LOG_DIR = Path("data/tracking")
+```
 
-    DataFeed로부터 실시간 캔들을 구독하여 전략 시그널을 생성하고,
-    가상 매수/매도를 실행한다. 실제 자본 없이 Go-Live Gate 데이터를 축적한다.
+**load_signals**:
+```python
+def load_signals(log_dir: Path = DEFAULT_LOG_DIR) -> pd.DataFrame:
+    """signals.parquet 로드.
 
     Parameters
     ----------
-    strategy : BaseStrategy
-        시그널 생성 전략
-    feed : DataFeed
-        실시간 데이터 피드
-    ticker : str
-        종목 코드 (예: "005930") — SignalRecord 기록 용
-    initial_capital : float, optional
-        초기 자본금 (기본값: 1_000_000.0)
-    cost_model : TradingCost | None, optional
-        거래 비용 모델 (기본값: None, 비용 미적용)
-    position_sizer : PositionSizer | None, optional
-        포지션 사이징 전략 (기본값: None, 자본 100% 투입)
-    logger : SignalLogger | None, optional
-        시그널 기록기 (기본값: None, 기록 미수행)
+    log_dir : Path
+        데이터 디렉토리 (기본값: data/tracking)
 
-    Raises
-    ------
-    ValueError
-        initial_capital <= 0인 경우
+    Returns
+    -------
+    pd.DataFrame
+        시그널 데이터. 파일 없으면 빈 DataFrame.
+    """
+    path = log_dir / "signals.parquet"
+    if not path.exists():
+        return pd.DataFrame()
+    return pd.read_parquet(path)
+```
+
+**load_outcomes**:
+```python
+def load_outcomes(log_dir: Path = DEFAULT_LOG_DIR) -> pd.DataFrame:
+    """outcomes.parquet 로드.
+
+    Parameters
+    ----------
+    log_dir : Path
+        데이터 디렉토리 (기본값: data/tracking)
+
+    Returns
+    -------
+    pd.DataFrame
+        결과 데이터. 파일 없으면 빈 DataFrame.
+    """
+    path = log_dir / "outcomes.parquet"
+    if not path.exists():
+        return pd.DataFrame()
+    return pd.read_parquet(path)
+```
+
+**DashboardMetrics**:
+```python
+@dataclass
+class DashboardMetrics:
+    """대시보드 요약 지표.
+
+    Attributes
+    ----------
+    total_signals : int
+        총 시그널 수
+    win_rate_1d : float | None
+        1일 적중률 (outcome_1d > 0 비율). 데이터 없으면 None.
+    win_rate_1w : float | None
+        1주 적중률. 데이터 없으면 None.
+    avg_return_1d : float | None
+        1일 평균 수익률. 데이터 없으면 None.
+    avg_return_1w : float | None
+        1주 평균 수익률. 데이터 없으면 None.
     """
 
-    def __init__(
-        self,
-        strategy: BaseStrategy,
-        feed: DataFeed,
-        ticker: str,
-        initial_capital: float = 1_000_000.0,
-        cost_model: TradingCost | None = None,
-        position_sizer: PositionSizer | None = None,
-        logger: SignalLogger | None = None,
-    ) -> None:
-        if initial_capital <= 0:
-            msg = f"initial_capital은 0보다 커야 합니다. 현재: {initial_capital}"
-            raise ValueError(msg)
-        self._strategy = strategy
-        self._feed = feed
-        self._ticker = ticker
-        self._initial_capital = initial_capital
-        self._cost_model = cost_model
-        self._position_sizer = position_sizer
-        self._logger = logger
-
-        self._cash: float = initial_capital
-        self._shares: float = 0.0
-        self._entry_price: float | None = None
-        self._last_price: float | None = None
-        self._history: pd.DataFrame = pd.DataFrame()
-        self._prev_signal: int = 0
-        self._completed_trade_returns: list[float] = []
-        self._started: bool = False
+    total_signals: int
+    win_rate_1d: float | None
+    win_rate_1w: float | None
+    avg_return_1d: float | None
+    avg_return_1w: float | None
 ```
 
-**퍼블릭 API**:
-
+**compute_metrics**:
 ```python
-    @property
-    def portfolio_value(self) -> float:
-        """현재 포트폴리오 가치 (현금 + 보유 주식 평가액)."""
-        if self._last_price is None:
-            return self._cash
-        return self._cash + self._shares * self._last_price
+def compute_metrics(outcomes_df: pd.DataFrame) -> DashboardMetrics:
+    """outcomes DataFrame → DashboardMetrics.
 
-    @property
-    def position(self) -> int:
-        """현재 포지션. 0=미보유, 1=보유."""
-        return 1 if self._shares > 0.0 else 0
-
-    def start(self) -> None:
-        """피드 구독을 시작하고 폴링을 시작한다.
-
-        Notes
-        -----
-        이미 시작된 경우 아무 작업도 하지 않는다 (subscribe 중복 방지).
-        """
-        if self._started:
-            return
-        self._feed.subscribe(self._on_candle)
-        self._feed.start()
-        self._started = True
-
-    def stop(self) -> None:
-        """피드 폴링을 중단한다."""
-        self._feed.stop()
-
-    def __enter__(self) -> PaperTrader:
-        self.start()
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: object,
-    ) -> None:
-        self.stop()
-```
-
-**_on_candle 핵심 로직**:
-
-```python
-    def _on_candle(self, df: pd.DataFrame) -> None:
-        """새 캔들 수신 시 호출되는 콜백.
-
-        Notes
-        -----
-        history에 concat 후 중복 제거(keep="last")하여 최신 데이터 우선 유지.
-        시그널이 NaN이면 (데이터 부족) 조기 반환한다.
-        """
-        # 1. history 갱신 (중복 제거: 새 데이터 우선)
-        if self._history.empty:
-            self._history = df.copy()
-        else:
-            combined = pd.concat([self._history, df])
-            self._history = combined[~combined.index.duplicated(keep="last")].sort_index()
-
-        # 2. last_price 갱신
-        self._last_price = float(self._history["Close"].iloc[-1])
-
-        # 3. 시그널 생성 (NaN 방어)
-        signals = self._strategy.generate_signals(self._history)
-        last_val = signals.iloc[-1]
-        if pd.isna(last_val):
-            return
-        curr_signal = int(last_val)
-
-        # 4. 포지션 전환 감지 → 가상 주문
-        price = self._last_price
-        if self._prev_signal == 0 and curr_signal == 1 and self.position == 0:
-            self._execute_buy(price)
-        elif self._prev_signal == 1 and curr_signal == 0 and self.position == 1:
-            self._execute_sell(price)
-
-        # 5. logger 기록 (시그널 변화 시만)
-        if self._logger is not None and curr_signal != self._prev_signal:
-            signal_code = 1 if curr_signal == 1 else -1
-            record = SignalRecord(
-                strategy_name=self._strategy.name,
-                ticker=self._ticker,
-                signal_date=pd.Timestamp(self._history.index[-1]),
-                signal=signal_code,
-                price=price,
-                logged_at=pd.Timestamp.now(),
-            )
-            self._logger.log(record)
-
-        # 6. prev_signal 갱신
-        self._prev_signal = curr_signal
-```
-
-**_execute_buy / _execute_sell**:
-
-```python
-    def _execute_buy(self, price: float) -> None:
-        """가상 매수 실행.
-
-        Notes
-        -----
-        position_sizer가 없으면 현금 100% 투입.
-        sizer가 0.0을 반환하면 (Kelly 데이터 부족 등) 매수 건너뜀.
-        """
-        fraction = (
-            self._position_sizer.calculate(
-                self.portfolio_value, self._completed_trade_returns
-            )
-            if self._position_sizer is not None
-            else 1.0
+    Notes
+    -----
+    outcomes_df가 비었으면 total_signals=0, 나머지 None 반환.
+    매수 시그널(signal == 1)만 집계.
+    적중률: outcome_Xd > 0 인 비율 (방향 예측 정확도).
+    """
+    if outcomes_df.empty:
+        return DashboardMetrics(
+            total_signals=0,
+            win_rate_1d=None,
+            win_rate_1w=None,
+            avg_return_1d=None,
+            avg_return_1w=None,
         )
-        invest = self._cash * fraction
-        if invest <= 0.0:
-            return
 
-        if self._cost_model is not None:
-            # invest = shares * price * (1 + buy_cost_rate)
-            self._shares = invest / (price * (1.0 + self._cost_model.buy_cost_rate()))
-        else:
-            self._shares = invest / price
+    total = len(outcomes_df)
 
-        self._cash -= invest
-        self._entry_price = price
+    # 1d 지표
+    col_1d = "outcome_1d"
+    win_rate_1d: float | None = None
+    avg_return_1d: float | None = None
+    if col_1d in outcomes_df.columns:
+        valid_1d = outcomes_df[col_1d].dropna()
+        if len(valid_1d) > 0:
+            win_rate_1d = float((valid_1d > 0).mean())
+            avg_return_1d = float(valid_1d.mean())
 
-    def _execute_sell(self, price: float) -> None:
-        """가상 매도 실행 (전량 매도).
+    # 1w 지표
+    col_1w = "outcome_1w"
+    win_rate_1w: float | None = None
+    avg_return_1w: float | None = None
+    if col_1w in outcomes_df.columns:
+        valid_1w = outcomes_df[col_1w].dropna()
+        if len(valid_1w) > 0:
+            win_rate_1w = float((valid_1w > 0).mean())
+            avg_return_1w = float(valid_1w.mean())
 
-        Notes
-        -----
-        trade_return은 비용 전 단순 가격 수익률 (entry_price → price).
-        """
-        proceeds = self._shares * price
+    return DashboardMetrics(
+        total_signals=total,
+        win_rate_1d=win_rate_1d,
+        win_rate_1w=win_rate_1w,
+        avg_return_1d=avg_return_1d,
+        avg_return_1w=avg_return_1w,
+    )
+```
 
-        if self._cost_model is not None:
-            net = proceeds * (1.0 - self._cost_model.sell_cost_rate())
-        else:
-            net = proceeds
+**compute_strategy_summary**:
+```python
+def compute_strategy_summary(outcomes_df: pd.DataFrame) -> pd.DataFrame:
+    """전략별 집계 DataFrame 반환.
 
-        self._cash += net
+    Returns
+    -------
+    pd.DataFrame
+        컬럼: strategy_name, signal_count, win_rate_1d, avg_return_1d
+        빈 outcomes_df이면 빈 DataFrame 반환.
 
-        if self._entry_price is not None:
-            trade_return = price / self._entry_price - 1.0
-            self._completed_trade_returns.append(trade_return)
+    Notes
+    -----
+    outcome_1d 컬럼이 없거나 전부 NaN이면 win_rate_1d / avg_return_1d는 NaN.
+    """
+    if outcomes_df.empty or "strategy_name" not in outcomes_df.columns:
+        return pd.DataFrame()
 
-        self._shares = 0.0
-        self._entry_price = None
+    # outcome_1d 컬럼 없으면 NaN 컬럼 추가
+    if "outcome_1d" not in outcomes_df.columns:
+        outcomes_df = outcomes_df.copy()
+        outcomes_df["outcome_1d"] = float("nan")
+
+    summary = (
+        outcomes_df.groupby("strategy_name")
+        .agg(
+            signal_count=("strategy_name", "count"),
+            win_rate_1d=("outcome_1d", lambda s: float((s.dropna() > 0).mean()) if s.dropna().empty is False else float("nan")),
+            avg_return_1d=("outcome_1d", lambda s: float(s.dropna().mean()) if s.dropna().empty is False else float("nan")),
+        )
+        .reset_index()
+    )
+    return summary
 ```
 
 파일 단위 검증:
 ```bash
-uv run ruff check src/smart_stock/trading/paper_trader.py && uv run mypy src/smart_stock/trading/paper_trader.py --strict
+uv run ruff check src/smart_stock/dashboard/data.py && uv run mypy src/smart_stock/dashboard/data.py --strict
 ```
 
 ---
 
-##### 3. `tests/test_paper_trader.py` (신규, 15개 테스트)
+##### 4. `src/smart_stock/dashboard/app.py` (신규, ~160줄)
+
+> **주의**: mypy strict 적용 제외 (Streamlit 타입 한계). ruff check/format은 적용.
+
+```python
+"""Smart Stock 웹 대시보드."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pandas as pd
+import streamlit as st
+
+from smart_stock.dashboard.data import (
+    compute_metrics,
+    compute_strategy_summary,
+    load_outcomes,
+    load_signals,
+)
+
+_LOG_DIR = Path("data/tracking")
+
+
+def _fmt_pct(value: float | None) -> str:
+    """float | None → 퍼센트 문자열 포맷."""
+    if value is None:
+        return "—"
+    return f"{value * 100:.1f}%"
+
+
+def _fmt_ret(value: float | None) -> str:
+    """float | None → 수익률 문자열 포맷."""
+    if value is None:
+        return "—"
+    sign = "+" if value >= 0 else ""
+    return f"{sign}{value * 100:.2f}%"
+
+
+def main() -> None:
+    """대시보드 메인 함수."""
+    st.set_page_config(page_title="Smart Stock Dashboard", layout="wide")
+    st.title("Smart Stock Dashboard")
+
+    # 새로고침 버튼
+    col_btn, col_path = st.columns([1, 4])
+    with col_btn:
+        st.button("새로고침")
+    with col_path:
+        st.caption(f"데이터 경로: {_LOG_DIR.resolve()}")
+
+    st.divider()
+
+    # 데이터 로드
+    signals_df = load_signals(_LOG_DIR)
+    outcomes_df = load_outcomes(_LOG_DIR)
+    metrics = compute_metrics(outcomes_df)
+
+    # ── 요약 지표 4열 ──────────────────────────────────
+    st.subheader("요약")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("총 시그널 수", metrics.total_signals)
+    c2.metric("1일 적중률", _fmt_pct(metrics.win_rate_1d))
+    c3.metric("1일 평균 수익률", _fmt_ret(metrics.avg_return_1d))
+    c4.metric("1주 평균 수익률", _fmt_ret(metrics.avg_return_1w))
+
+    st.divider()
+
+    # ── 시그널 이력 ────────────────────────────────────
+    st.subheader("최근 시그널")
+    if signals_df.empty:
+        st.info("기록된 시그널이 없습니다. PaperTrader를 실행하여 데이터를 축적하세요.")
+    else:
+        display_df = signals_df.tail(20).iloc[::-1].copy()
+        display_df["signal"] = display_df["signal"].map({1: "매수", -1: "매도", 0: "홀드"})
+        st.dataframe(
+            display_df,
+            column_config={
+                "strategy_name": st.column_config.TextColumn("전략"),
+                "ticker": st.column_config.TextColumn("종목"),
+                "signal_date": st.column_config.DatetimeColumn("시그널 시각"),
+                "signal": st.column_config.TextColumn("시그널"),
+                "price": st.column_config.NumberColumn("가격", format="₩%.0f"),
+                "logged_at": st.column_config.DatetimeColumn("기록 시각"),
+            },
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    st.divider()
+
+    # ── 전략별 성과 ────────────────────────────────────
+    st.subheader("전략별 성과")
+    if outcomes_df.empty:
+        st.info("결과 데이터가 없습니다. OutcomeTracker.update()를 실행하세요.")
+    else:
+        summary_df = compute_strategy_summary(outcomes_df)
+        if summary_df.empty:
+            st.info("집계할 데이터가 없습니다.")
+        else:
+            st.dataframe(
+                summary_df,
+                column_config={
+                    "strategy_name": st.column_config.TextColumn("전략"),
+                    "signal_count": st.column_config.NumberColumn("시그널 수"),
+                    "win_rate_1d": st.column_config.NumberColumn("1일 적중률", format="%.1f%%"),
+                    "avg_return_1d": st.column_config.NumberColumn("1일 평균 수익률", format="%.2f%%"),
+                },
+                use_container_width=True,
+                hide_index=True,
+            )
+
+
+if __name__ == "__main__":
+    main()
+```
+
+> **실행**: `uv run streamlit run src/smart_stock/dashboard/app.py`
+
+---
+
+##### 5. `tests/test_dashboard_data.py` (신규, 10개 테스트)
+
+```python
+from __future__ import annotations
+
+from pathlib import Path
+
+import pandas as pd
+import pytest
+
+from smart_stock.dashboard.data import (
+    DashboardMetrics,
+    compute_metrics,
+    compute_strategy_summary,
+    load_outcomes,
+    load_signals,
+)
+```
 
 **테스트 헬퍼**:
 ```python
-def _make_sample_df(
-    start: str = "2024-01-02 09:30",
-    periods: int = 1,
-    close_prices: list[float] | None = None,
+def _make_signals_df() -> pd.DataFrame:
+    return pd.DataFrame({
+        "strategy_name": ["SMA", "SMA"],
+        "ticker": ["005930", "005930"],
+        "signal_date": pd.to_datetime(["2024-01-02", "2024-01-03"]),
+        "signal": [1, -1],
+        "price": [70000.0, 72000.0],
+        "logged_at": pd.to_datetime(["2024-01-02", "2024-01-03"]),
+    })
+
+
+def _make_outcomes_df(
+    outcome_1d: list[float | None] | None = None,
+    outcome_1w: list[float | None] | None = None,
 ) -> pd.DataFrame:
-    idx = pd.date_range(start, periods=periods, freq="5min")
-    closes = close_prices if close_prices is not None else [100.0] * periods
-    return pd.DataFrame(
-        {
-            "Open": closes,
-            "High": [p + 1.0 for p in closes],
-            "Low": [p - 1.0 for p in closes],
-            "Close": closes,
-            "Volume": [10_000] * periods,
-        },
-        index=idx,
-    )
-
-def _make_mock_strategy(signals: list[int]) -> BaseStrategy:
-    """spec=BaseStrategy mock — generate_signals가 hist 길이에 맞춘 Series 반환."""
-    strategy = MagicMock(spec=BaseStrategy)
-    strategy.name = "MockStrategy"
-
-    def _gen(df: pd.DataFrame) -> pd.Series:
-        n = len(df)
-        padded = signals + [signals[-1]] * max(0, n - len(signals))
-        return pd.Series(padded[:n], index=df.index, dtype=float)
-
-    strategy.generate_signals.side_effect = _gen
-    return strategy
-
-def _make_mock_feed() -> DataFeed:
-    return MagicMock(spec=DataFeed)
+    n = 3
+    o1d = outcome_1d if outcome_1d is not None else [0.01, -0.005, 0.02]
+    o1w = outcome_1w if outcome_1w is not None else [0.02, -0.01, 0.03]
+    return pd.DataFrame({
+        "strategy_name": ["SMA", "SMA", "RSI"],
+        "ticker": ["005930", "005930", "035720"],
+        "signal_date": pd.to_datetime(["2024-01-02", "2024-01-03", "2024-01-04"]),
+        "signal": [1, 1, 1],
+        "entry_price": [70000.0, 71000.0, 50000.0],
+        "outcome_1d": o1d,
+        "outcome_1w": o1w,
+        "updated_at": pd.to_datetime(["2024-01-03", "2024-01-04", "2024-01-05"]),
+    })
 ```
 
 **테스트 클래스**:
 ```
-TestPaperTraderInit (3개):
-- test_initial_portfolio_value_equals_capital — portfolio_value == initial_capital
-- test_initial_position_is_zero — position == 0
-- test_invalid_capital_raises — initial_capital=0 → ValueError
+TestLoadSignals (2개):
+- test_load_signals_missing_file
+  tmp_path에 파일 없음 → 빈 DataFrame
 
-TestPaperTraderBuy (3개):
-- test_buy_increases_shares — 매수 후 _shares > 0
-- test_buy_decreases_cash — 매수 후 _cash < initial_capital
-- test_buy_with_cost_model — shares == invest / (price * (1 + buy_cost_rate)) 검증
+- test_load_signals_returns_dataframe
+  tmp_path에 signals parquet 저장 → 동일 데이터 반환
 
-TestPaperTraderSell (3개):
-- test_sell_clears_shares — 매도 후 _shares == 0
-- test_sell_records_trade_return — trade_return == 110/100 - 1 == 0.1
-- test_sell_with_cost_model — cash == shares * price * (1 - sell_cost_rate) 검증
+TestLoadOutcomes (2개):
+- test_load_outcomes_missing_file
+  tmp_path에 파일 없음 → 빈 DataFrame
 
-TestPaperTraderSignalFlow (3개):
-- test_no_signal_change_no_action — 신호 변화 없음 → shares==0, cash 불변
-- test_buy_then_sell_portfolio_value — 매수(100)→매도(110) 후 portfolio_value > initial_capital
-- test_logger_called_on_signal — logger.log assert_called_once()
+- test_load_outcomes_returns_dataframe
+  tmp_path에 outcomes parquet 저장 → 동일 데이터 반환
 
-TestPaperTraderLifecycle (3개):
-- test_start_stop_no_error — feed.start/stop 각 1회 호출
-- test_context_manager — with 탈출 후 feed.stop 호출
-- test_double_start_no_error — start() 2번 호출 → feed.subscribe 1회만 호출
+TestComputeMetrics (4개):
+- test_metrics_empty_df
+  빈 df → DashboardMetrics(total_signals=0, 나머지 None)
+
+- test_metrics_win_rate_1d
+  outcome_1d=[0.01, -0.005, 0.02] → win_rate_1d == 2/3
+
+- test_metrics_avg_return_1d
+  outcome_1d=[0.01, -0.005, 0.02] → avg_return_1d ≈ (0.01-0.005+0.02)/3
+
+- test_metrics_no_1d_data
+  outcome_1d 컬럼 없는 df → win_rate_1d=None, avg_return_1d=None
+
+TestComputeStrategySummary (2개):
+- test_summary_empty_df
+  빈 df → 빈 DataFrame
+
+- test_summary_groups_by_strategy
+  전략 2개("SMA" 2건, "RSI" 1건) → 행 2개, signal_count 검증
 ```
-
-**매수/매도 시그널 생성 패턴**:
-- 시그널 prev→curr 전환 만들기:
-  - `_on_candle(df1)` 호출 → `_prev_signal = signals[-1 at len=1]`
-  - `_on_candle(df2)` 호출 → `curr_signal = signals[-1 at len=2]` → 변화 감지
-- 예: `signals=[0,1]` 이면 두 번째 호출에서 매수 트리거
-- 예: `signals=[0,1,0]` 이면 세 번째 호출에서 매도 트리거
 
 ---
 
@@ -375,10 +469,10 @@ TestPaperTraderLifecycle (3개):
 #### Agent-검증 (구현 완료 후 동일 Agent가 순서대로 실행)
 
 ```bash
-uv run ruff check src/smart_stock/trading/
-uv run ruff format src/smart_stock/trading/
-uv run mypy src/smart_stock/trading/ --strict
-uv run pytest tests/test_paper_trader.py -v
+uv run ruff check src/smart_stock/dashboard/
+uv run ruff format src/smart_stock/dashboard/
+uv run mypy src/smart_stock/dashboard/data.py --strict
+uv run pytest tests/test_dashboard_data.py -v
 uv run pytest tests/ -v
 ```
 
@@ -389,17 +483,17 @@ uv run pytest tests/ -v
 
 ## 완료 기준
 
-- [ ] `src/smart_stock/trading/__init__.py` 신규 생성
-- [ ] `src/smart_stock/trading/paper_trader.py` 신규 생성
-- [ ] `PaperTrader` 퍼블릭 API 재노출
-- [ ] `_on_candle()` 직접 호출 → 매수/매도 실행 동작
-- [ ] cost_model 적용 시 비용 차감 검증
-- [ ] position_sizer 적용 시 fraction 반영
-- [ ] context manager(`with` 블록) 동작
-- [ ] double start 중복 방지 (subscribe 1회)
+- [ ] `src/smart_stock/dashboard/__init__.py` 신규 생성
+- [ ] `src/smart_stock/dashboard/data.py` 신규 생성
+- [ ] `src/smart_stock/dashboard/app.py` 신규 생성
+- [ ] `pyproject.toml` streamlit 의존성 추가
+- [ ] `load_signals` / `load_outcomes` — 파일 없을 때 빈 DataFrame 반환
+- [ ] `compute_metrics` — 빈 df 방어, 적중률·평균 수익률 계산
+- [ ] `compute_strategy_summary` — 전략별 집계 (strategy_name, signal_count, win_rate_1d, avg_return_1d)
+- [ ] Streamlit 앱 4개 섹션 (요약/시그널이력/전략성과/빈화면안내)
 - [ ] ruff check 통과
 - [ ] ruff format 적용
-- [ ] mypy --strict 통과
-- [ ] pytest 신규 테스트 전체 통과 (15개)
-- [ ] pytest 전체 테스트 스위트 통과 (기존 222개 보존)
+- [ ] mypy `data.py` --strict 통과
+- [ ] pytest 신규 테스트 전체 통과 (10개)
+- [ ] pytest 전체 테스트 스위트 통과 (기존 237개 보존)
 - [ ] `RESULT.md` 갱신 완료

@@ -5,7 +5,7 @@
 
 ---
 
-## 현재 작업: TASK-014 — 페이퍼 트레이딩 구현 (FR-204)
+## 현재 작업: TASK-015 — 웹 대시보드 구현 (FR-206)
 
 **상태**: ✅ 완료
 
@@ -13,28 +13,32 @@
 
 ## Phase 2: 구현
 
-### Agent-구현trading
+### Agent-구현dashboard
 **파일**:
-- `src/smart_stock/trading/__init__.py` (신규)
-- `src/smart_stock/trading/paper_trader.py` (신규, ~200줄)
-- `tests/test_paper_trader.py` (신규, 15개 테스트)
+- `pyproject.toml` (수정)
+- `src/smart_stock/dashboard/__init__.py` (신규)
+- `src/smart_stock/dashboard/data.py` (신규)
+- `src/smart_stock/dashboard/app.py` (신규)
+- `tests/test_dashboard_data.py` (신규)
 
 **상태**: ✅ 완료
 
 **구현 내용**:
-- `PaperTrader` 클래스: 가상 포트폴리오 기반 페이퍼 트레이딩 실행기
-  - DataFeed로부터 실시간 캔들을 구독하여 전략 시그널 생성
-  - 가상 매수/매도 실행 + 성과 추적
-  - TradingCost 모델 적용 (비용 차감)
-  - PositionSizer 연동 (동적 포지션 사이징)
-  - SignalLogger 통합 (시그널 변화 기록)
-- **핵심 메서드**:
-  - `portfolio_value`: 현금 + 보유 주식 평가액
-  - `position`: 현재 포지션 상태 (0=미보유, 1=보유)
-  - `start() / stop()`: 피드 생명주기 관리
-  - `_on_candle()`: 새 캔들 수신 콜백 (history 갱신 → 신호 생성 → 포지션 전환 → logger 기록)
-  - `_execute_buy() / _execute_sell()`: 가상 거래 실행
-- **테스트 패턴**: 각 _on_candle 호출은 새로운 캔들 1개씩 수신 (DataFeed 동작 모방)
+- `pyproject.toml`: streamlit>=1.32 의존성 추가
+- `src/smart_stock/dashboard/__init__.py`: 퍼블릭 API 재노출 (load_signals, load_outcomes, DashboardMetrics, compute_metrics, compute_strategy_summary)
+- `src/smart_stock/dashboard/data.py`: 순수 함수 모듈 (170줄)
+  - `load_signals()`: signals.parquet 로드 (파일 없으면 빈 DataFrame)
+  - `load_outcomes()`: outcomes.parquet 로드 (파일 없으면 빈 DataFrame)
+  - `DashboardMetrics`: 요약 지표 데이터클래스
+  - `compute_metrics()`: outcomes DataFrame → DashboardMetrics 계산
+  - `compute_strategy_summary()`: 전략별 집계
+- `src/smart_stock/dashboard/app.py`: Streamlit UI (115줄)
+  - 새로고침 버튼 + 데이터 경로 표시
+  - 요약 섹션 (4열 메트릭)
+  - 최근 시그널 섹션 (테이블)
+  - 전략별 성과 섹션 (테이블)
+  - 빈 화면 안내 메시지
+- `tests/test_dashboard_data.py`: 10개 테스트 작성
 
 ---
 
@@ -42,45 +46,47 @@
 
 ### ruff check
 ```bash
-uv run ruff check src/smart_stock/trading/
+uv run ruff check src/smart_stock/dashboard/
 ```
-**결과**: ✅ 통과 (All checks passed!)
+**결과**: ✅ 통과 (초기: 4개 오류 → 수정 후 통과)
+
+**오류 해결**:
+- pandas 미사용 임포트 제거
+- 라인 길이 초과 → signal_map 변수 + column_config 줄바꿈
 
 ### ruff format
 ```bash
-uv run ruff format src/smart_stock/trading/
+uv run ruff format src/smart_stock/dashboard/
 ```
-**결과**: ✅ 통과 (2 files left unchanged)
+**결과**: ✅ 통과 (1개 파일 재포맷: data.py lambda 들여쓰기)
 
-### mypy strict
+### mypy strict (data.py만)
 ```bash
-uv run mypy src/smart_stock/trading/ --strict
+uv run mypy src/smart_stock/dashboard/data.py --strict
 ```
-**결과**: ✅ 통과 (Success: no issues found in 2 source files)
+**결과**: ✅ 통과 (Success: no issues found in 1 source file)
 
 ### pytest (신규 테스트)
 ```bash
-uv run pytest tests/test_paper_trader.py -v
+uv run pytest tests/test_dashboard_data.py -v
 ```
-**결과**: ✅ 통과 (15 passed in 0.30s)
+**결과**: ✅ 통과 (10개/10개 PASSED)
 
-**테스트 클래스**:
-- `TestPaperTraderInit` (3개): 초기화 검증
-- `TestPaperTraderBuy` (3개): 매수 로직 검증
-- `TestPaperTraderSell` (3개): 매도 로직 검증
-- `TestPaperTraderSignalFlow` (3개): 신호 흐름 검증
-- `TestPaperTraderLifecycle` (3개): 생명주기 관리 검증
+테스트 클래스:
+- TestLoadSignals (2개): 파일 없음 / 파일 로드
+- TestLoadOutcomes (2개): 파일 없음 / 파일 로드
+- TestComputeMetrics (4개): 빈 df / win_rate_1d / avg_return_1d / 컬럼 없음
+- TestComputeStrategySummary (2개): 빈 df / 전략별 그룹핑
 
 ### pytest (전체 테스트 스위트)
 ```bash
 uv run pytest tests/ -v
 ```
-**결과**: ✅ 통과 (237 passed in 1.09s)
+**결과**: ✅ 통과 (247개/247개 PASSED)
 
-**테스트 집계**:
-- 기존: 222개
-- 신규: 15개 (paper_trader)
-- **합계: 237개** ✅
+- 기존 테스트: 237개 (모두 통과)
+- 신규 테스트: 10개 (모두 통과)
+- **합계**: 247개
 
 ---
 
@@ -89,17 +95,22 @@ uv run pytest tests/ -v
 **상태**: ✅ 완료
 
 **완료 기준 체크리스트**:
-- [x] `src/smart_stock/trading/__init__.py` 신규 생성
-- [x] `src/smart_stock/trading/paper_trader.py` 신규 생성 (~200줄)
-- [x] `PaperTrader` 퍼블릭 API 재노출
-- [x] `_on_candle()` 직접 호출 → 매수/매도 실행 동작 검증
-- [x] cost_model 적용 시 비용 차감 검증
-- [x] position_sizer 적용 시 fraction 반영
-- [x] context manager (`with` 블록) 동작
-- [x] double start 중복 방지 (subscribe 1회)
+- [x] `src/smart_stock/dashboard/__init__.py` 신규 생성
+- [x] `src/smart_stock/dashboard/data.py` 신규 생성 (170줄)
+- [x] `src/smart_stock/dashboard/app.py` 신규 생성 (115줄)
+- [x] `pyproject.toml` streamlit 의존성 추가
+- [x] `load_signals` / `load_outcomes` — 파일 없을 때 빈 DataFrame 반환
+- [x] `compute_metrics` — 빈 df 방어, 적중률·평균 수익률 계산
+- [x] `compute_strategy_summary` — 전략별 집계
+- [x] Streamlit 앱 4개 섹션 (요약/시그널이력/전략성과/빈화면안내)
 - [x] ruff check 통과
 - [x] ruff format 적용
-- [x] mypy --strict 통과
-- [x] pytest 신규 테스트 전체 통과 (15개)
-- [x] pytest 전체 테스트 스위트 통과 (237개, 기존 222개 보존)
+- [x] mypy `data.py` --strict 통과
+- [x] pytest 신규 테스트 전체 통과 (10개)
+- [x] pytest 전체 테스트 스위트 통과 (247개 = 기존 237 + 신규 10)
 - [x] `RESULT.md` 갱신 완료
+
+**실행 방법**:
+```bash
+uv run streamlit run src/smart_stock/dashboard/app.py
+```
