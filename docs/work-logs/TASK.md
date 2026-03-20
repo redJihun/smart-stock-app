@@ -7,25 +7,24 @@
 
 ## 현재 작업
 
-### 작업 ID: TASK-012
-### 제목: 포지션 사이징 구현 (FR-202)
+### 작업 ID: TASK-013
+### 제목: 실시간 데이터 피드 구현 (FR-203)
 
 ### 배경
 
-Phase 2 FR-202 요구사항.
-TASK-011에서 거래 비용 모델(`TradingCost`)을 구현했지만,
-현재 `BacktestEngine`은 모든 거래에서 자본 100%를 투입하는 방식만 지원한다.
-현실적인 트레이딩에서는 Kelly Criterion, 고정 비율 등 다양한 포지션 사이징 전략을 사용하므로,
-`PositionSizer` ABC와 3가지 구현체를 도입하여 `BacktestEngine`에 통합한다.
+Phase 2 FR-203 요구사항.
+페이퍼 트레이딩(FR-204)과 실시간 시그널 생성의 전제 조건.
+KIS API 분봉 wrapper(TASK-007)가 이미 구현되어 있으므로,
+이를 주기적으로 호출하는 폴링 기반 `DataFeed` 프레임워크를 도입한다.
 
 ---
 
 ## 참고 파일 (먼저 읽을 것)
 
-- `src/smart_stock/backtesting/engine.py` — `BacktestEngine._build_portfolio()` 수정 대상
-- `src/smart_stock/backtesting/cost_model.py` — 클래스 설계 패턴 참고 (일반 클래스, `__init__` 검증)
-- `src/smart_stock/backtesting/__init__.py` — 퍼블릭 API 재노출 현황
-- `tests/test_backtesting_engine.py` — backward-compatibility 검증 기준
+- `src/smart_stock/data/__init__.py` — 퍼블릭 API 재노출 현황
+- `src/smart_stock/data/kis_client.py` — `fetch_kr_intraday` 시그니처 확인
+- `src/smart_stock/backtesting/position_sizer.py` — ABC + `__init__` 검증 패턴 참고
+- `tests/test_data_loader.py` — mock 기반 테스트 패턴 참고
 - `.claude/rules/task-cycle.md` — 실행자 금지 행동 확인
 
 ---
@@ -40,335 +39,246 @@ TASK-011에서 거래 비용 모델(`TradingCost`)을 구현했지만,
 
 ---
 
-#### Agent-구현sizer → 4개 파일 수정/신규
+#### Agent-구현feed → 3개 파일 수정/신규
 
 ---
 
-##### 1. `src/smart_stock/backtesting/position_sizer.py` (신규, ~100줄)
+##### 1. `src/smart_stock/data/feed.py` (신규, ~120줄)
 
 ```python
 from __future__ import annotations
 
-import math
+import threading
 from abc import ABC, abstractmethod
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
+import pandas as pd
 
-class PositionSizer(ABC):
-    """포지션 사이징 추상 기반 클래스.
+if TYPE_CHECKING:
+    pass
+```
 
-    Parameters
-    ----------
-    (없음 — 서브클래스에서 정의)
+**DataFeed ABC**:
+```python
+class DataFeed(ABC):
+    """실시간 데이터 피드 추상 기반 클래스.
 
     Notes
     -----
-    calculate()는 항상 [0.0, 1.0] 범위의 투입 비율(fraction)을 반환해야 한다.
+    start() / stop() / subscribe() 인터페이스를 제공한다.
+    context manager(__enter__ / __exit__)로 생명주기를 관리할 수 있다.
     """
 
     @abstractmethod
-    def calculate(
-        self,
-        portfolio_value: float,
-        trade_returns: list[float],
-    ) -> float:
-        """투입 비율(fraction)을 계산한다.
+    def start(self) -> None:
+        """피드를 시작한다."""
+
+    @abstractmethod
+    def stop(self) -> None:
+        """피드를 중단한다."""
+
+    @abstractmethod
+    def subscribe(self, callback: Callable[[pd.DataFrame], None]) -> None:
+        """새 데이터 도착 시 호출될 콜백을 등록한다.
 
         Parameters
         ----------
-        portfolio_value : float
-            현재 포트폴리오 가치 (단위: 원)
-        trade_returns : list[float]
-            지금까지 완결된 거래 수익률 리스트 (소수, 예: 0.05 = 5%)
-
-        Returns
-        -------
-        float
-            투입 비율 [0.0, 1.0]
+        callback : Callable[[pd.DataFrame], None]
+            새 캔들 데이터가 담긴 DataFrame을 인자로 받는 함수
         """
+
+    def __enter__(self) -> DataFeed:
+        self.start()
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object,
+    ) -> None:
+        self.stop()
 ```
 
-**FixedAmountSizer**:
+**PollingDataFeed**:
 ```python
-class FixedAmountSizer(PositionSizer):
-    """매 거래마다 고정 금액을 투입하는 사이저.
+class PollingDataFeed(DataFeed):
+    """폴링 기반 실시간 데이터 피드.
+
+    주기적으로 fetcher를 호출하여 새 캔들 데이터를 구독자에게 전달한다.
 
     Parameters
     ----------
-    amount : float
-        매 거래마다 투입할 고정 금액 (양수여야 함)
+    ticker : str
+        종목 코드 (예: "005930")
+    interval : str, optional
+        분봉 간격 (기본값: "5m"). "1m" | "5m" | "15m" | "30m" | "1h"
+    poll_interval : float, optional
+        폴링 주기 (초, 기본값: 60.0)
+    fetcher : Callable[..., pd.DataFrame] | None, optional
+        데이터 수집 함수 (기본값: None → fetch_kr_intraday 사용)
 
     Raises
     ------
     ValueError
-        amount <= 0인 경우
+        poll_interval <= 0인 경우
     """
 
-    def __init__(self, amount: float) -> None:
-        if amount <= 0:
-            raise ValueError(f"amount는 0보다 커야 합니다. 현재: {amount}")
-        self.amount = amount
+    def __init__(
+        self,
+        ticker: str,
+        interval: str = "5m",
+        poll_interval: float = 60.0,
+        fetcher: Callable[..., pd.DataFrame] | None = None,
+    ) -> None:
+        if poll_interval <= 0:
+            raise ValueError(f"poll_interval은 0보다 커야 합니다. 현재: {poll_interval}")
+        self._ticker = ticker
+        self._interval = interval
+        self._poll_interval = poll_interval
+        self._fetcher = fetcher
+        self._callbacks: list[Callable[[pd.DataFrame], None]] = []
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._last_ts: pd.Timestamp | None = None
 
-    def calculate(self, portfolio_value: float, trade_returns: list[float]) -> float:
-        if portfolio_value <= 0:
-            return 0.0
-        return min(self.amount / portfolio_value, 1.0)
-```
+    def subscribe(self, callback: Callable[[pd.DataFrame], None]) -> None:
+        self._callbacks.append(callback)
 
-**FixedFractionSizer**:
-```python
-class FixedFractionSizer(PositionSizer):
-    """매 거래마다 포트폴리오의 고정 비율을 투입하는 사이저.
+    def start(self) -> None:
+        """백그라운드 스레드에서 폴링을 시작한다.
 
-    Parameters
-    ----------
-    fraction : float
-        투입 비율 (0 초과 1 이하)
+        Notes
+        -----
+        이미 실행 중이면 아무 작업도 하지 않는다.
+        스레드는 daemon=True로 설정되어 메인 프로세스 종료 시 자동 종료된다.
+        """
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._poll_loop, daemon=True)
+        self._thread.start()
 
-    Raises
-    ------
-    ValueError
-        fraction <= 0 또는 fraction > 1.0인 경우
-    """
+    def stop(self) -> None:
+        """폴링을 중단하고 스레드가 종료될 때까지 대기한다.
 
-    def __init__(self, fraction: float) -> None:
-        if fraction <= 0 or fraction > 1.0:
-            raise ValueError(f"fraction은 (0, 1] 범위여야 합니다. 현재: {fraction}")
-        self.fraction = fraction
+        Notes
+        -----
+        최대 5초 대기 후 반환한다.
+        """
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=5.0)
+            self._thread = None
 
-    def calculate(self, portfolio_value: float, trade_returns: list[float]) -> float:
-        return self.fraction
-```
+    def _poll_loop(self) -> None:
+        """백그라운드 스레드에서 실행되는 폴링 루프."""
+        while not self._stop_event.is_set():
+            self._fetch_and_notify()
+            self._stop_event.wait(self._poll_interval)
 
-**KellyCriterionSizer**:
-```python
-class KellyCriterionSizer(PositionSizer):
-    """Kelly Criterion으로 최적 투입 비율을 계산하는 사이저.
+    def _fetch_and_notify(self) -> None:
+        """데이터를 fetch하고 새 캔들이 있으면 구독자에게 전달한다.
 
-    f* = (b * p - q) / b
-    b = 평균 이익 / 평균 손실 비율
-    p = 승률, q = 1 - p
+        Notes
+        -----
+        fetch 실패(예외 발생, 빈 데이터) 시 조용히 건너뛴다.
+        이전 호출 이후의 새 캔들만 콜백에 전달한다 (중복 방지).
+        """
+        try:
+            today = pd.Timestamp.now().strftime("%Y%m%d")
+            actual_fetcher = self._fetcher if self._fetcher is not None else _get_default_fetcher()
+            df: pd.DataFrame = actual_fetcher(self._ticker, today, self._interval)
+        except Exception:  # noqa: BLE001
+            return
 
-    Parameters
-    ----------
-    max_fraction : float, optional
-        최대 투입 비율 상한 (기본값: 0.25)
-        과레버리지 방지를 위해 f* > max_fraction이면 max_fraction으로 클리핑
+        if df.empty:
+            return
 
-    Raises
-    ------
-    ValueError
-        max_fraction <= 0 또는 max_fraction > 1.0인 경우
+        new_rows = df if self._last_ts is None else df[df.index > self._last_ts]
 
-    Notes
-    -----
-    과거 거래 데이터가 2개 미만이면 0.0 반환 (통계적 불충분)
-    f* < 0 (기대값 음수 전략)이면 0.0으로 클리핑
-    """
+        if new_rows.empty:
+            return
 
-    def __init__(self, max_fraction: float = 0.25) -> None:
-        if max_fraction <= 0 or max_fraction > 1.0:
-            raise ValueError(f"max_fraction은 (0, 1] 범위여야 합니다. 현재: {max_fraction}")
-        self.max_fraction = max_fraction
+        self._last_ts = pd.Timestamp(df.index[-1])
 
-    def calculate(self, portfolio_value: float, trade_returns: list[float]) -> float:
-        returns = [r for r in trade_returns if r != 0.0]
-        if len(returns) < 2:
-            return 0.0
+        for cb in list(self._callbacks):
+            cb(new_rows)
 
-        wins = [r for r in returns if r > 0]
-        losses = [r for r in returns if r < 0]
 
-        if not losses:
-            return self.max_fraction
-        if not wins:
-            return 0.0
+def _get_default_fetcher() -> Callable[..., pd.DataFrame]:
+    """기본 fetcher(fetch_kr_intraday)를 지연 임포트하여 반환한다."""
+    from smart_stock.data.kis_client import fetch_kr_intraday  # noqa: PLC0415
 
-        p = len(wins) / len(returns)
-        q = 1.0 - p
-        avg_win = sum(wins) / len(wins)
-        avg_loss = abs(sum(losses) / len(losses))
-        b = avg_win / avg_loss
-
-        f_star = (b * p - q) / b
-        return max(0.0, min(f_star, self.max_fraction))
+    return fetch_kr_intraday  # type: ignore[return-value]
 ```
 
 ---
 
-##### 2. `src/smart_stock/backtesting/engine.py` (수정)
+##### 2. `src/smart_stock/data/__init__.py` (수정)
 
-**import 추가**:
+`DataFeed`, `PollingDataFeed` 추가:
 ```python
-from smart_stock.backtesting.position_sizer import PositionSizer
-```
-
-**BacktestEngine.__init__ 수정**:
-```python
-def __init__(
-    self,
-    initial_capital: float = 1_000_000.0,
-    cost_model: TradingCost | None = None,
-    position_sizer: PositionSizer | None = None,  # 신규 파라미터 (마지막에 추가)
-) -> None:
-    """초기화.
-
-    Parameters
-    ----------
-    initial_capital : float, optional
-        초기 자본금 (기본값: 1,000,000)
-    cost_model : TradingCost | None, optional
-        거래 비용 모델 (기본값: None, 비용 미적용)
-    position_sizer : PositionSizer | None, optional
-        포지션 사이징 전략 (기본값: None, 자본 100% 투입)
-    ...
-    """
-    ...
-    self.position_sizer = position_sizer
-```
-
-**_build_portfolio() 수정** — PositionSizer 분기 추가:
-
-`position_sizer is None`이면 기존 벡터 연산 경로 그대로 유지 (backward-compatible).
-`position_sizer`가 있으면 `_compute_sized_position()` private 메서드를 호출하여 fraction Series를 계산한 후, 기존 `position` 대신 사용.
-
-**_compute_sized_position() private 메서드 추가**:
-
-```python
-def _compute_sized_position(
-    self,
-    df: pd.DataFrame,
-    signals: pd.Series,
-) -> pd.Series:
-    """PositionSizer를 적용하여 포지션 비율 시계열을 계산한다.
-
-    거래 진입 시점마다 PositionSizer.calculate()를 호출하여
-    해당 거래의 투입 비율을 결정한다.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        OHLCV 데이터
-    signals : pd.Series
-        거래 신호 (0 또는 1)
-
-    Returns
-    -------
-    pd.Series
-        포지션 비율 시계열 (0.0~1.0)
-    """
-    # self.position_sizer가 None이 아님을 이미 호출자에서 검증
-    sizer = self.position_sizer
-    assert sizer is not None  # mypy를 위한 타입 좁히기
-
-    shifted = signals.shift(1).fillna(0)
-    pos_diff = shifted.diff().fillna(0)
-
-    fractions = pd.Series(0.0, index=df.index)
-    completed_trade_returns: list[float] = []
-    current_fraction = 0.0
-    entry_price: float | None = None
-
-    for idx in df.index:
-        diff = float(pos_diff.loc[idx])
-        if diff > 0:  # 매수 진입
-            current_fraction = sizer.calculate(
-                self.initial_capital, completed_trade_returns
-            )
-            entry_price = float(df["Close"].loc[idx])
-        elif diff < 0:  # 매도 청산
-            if entry_price is not None:
-                trade_ret = float(df["Close"].loc[idx]) / entry_price - 1.0
-                completed_trade_returns.append(trade_ret)
-            current_fraction = 0.0
-            entry_price = None
-        fractions.loc[idx] = current_fraction
-
-    return fractions
-```
-
-**_build_portfolio() 분기 로직**:
-
-```python
-def _build_portfolio(self, df, signals) -> tuple[pd.Series, float]:
-    if self.position_sizer is not None:
-        position = self._compute_sized_position(df, signals)
-    else:
-        position = signals.shift(1).fillna(0)
-    pos_diff = position.diff().fillna(0)
-    # 이하 기존 로직 동일 (cost_model 적용 포함)
-    ...
-```
-
-주의: `pos_diff`를 기반으로 매수/매도 시점을 감지하는 cost_model 로직은 동일하게 동작합니다. PositionSizer 경로에서도 fractions가 0→양수(매수 진입)와 양수→0(매도 청산)으로 변화하므로 `pos_diff > 0`, `pos_diff < 0` 조건이 정상 작동합니다.
-
----
-
-##### 3. `src/smart_stock/backtesting/__init__.py` (수정)
-
-`PositionSizer` 4개 클래스 추가:
-```python
-from smart_stock.backtesting.position_sizer import (
-    FixedAmountSizer,
-    FixedFractionSizer,
-    KellyCriterionSizer,
-    PositionSizer,
-)
+from smart_stock.data.feed import DataFeed, PollingDataFeed
 
 __all__ = [
-    "BacktestEngine",
-    "BacktestResult",
-    "FixedAmountSizer",
-    "FixedFractionSizer",
-    "KellyCriterionSizer",
-    "KellyCriterionSizer",  # 중복 제거 후 알파벳순 정렬
-    "PositionSizer",
-    "TradingCost",
-    "max_drawdown",
-    "run_and_track",
-    "sharpe_ratio",
-    "total_return",
-    "win_rate",
+    "DataFeed",
+    "Market",
+    "PollingDataFeed",
+    "STANDARD_COLUMNS",
+    "fetch_kr_intraday",
+    "fetch_stock",
+    "fetch_stock_cached",
+    "validate_schema",
 ]
 ```
 
-(실제 작성 시 중복 없이 알파벳순 정렬)
+(알파벳순 정렬 유지)
 
 ---
 
-##### 4. `tests/test_position_sizer.py` (신규, ~17개 테스트)
+##### 3. `tests/test_data_feed.py` (신규, ~12개 테스트)
 
 ```
-TestFixedAmountSizer (4개):
-- test_normal_fraction_calculation    — amount=500_000, portfolio=1_000_000 → 0.5
-- test_clips_to_one_when_amount_exceeds_portfolio — amount > portfolio → 1.0
-- test_invalid_amount_raises          — amount <= 0 → ValueError
-- test_ignores_trade_returns          — trade_returns에 무관하게 동일 결과
+TestPollingDataFeedInit (3개):
+- test_default_poll_interval   — poll_interval 기본값 60.0 확인
+- test_custom_fetcher_stored   — mock fetcher 주입 후 _fetcher 속성 확인
+- test_invalid_poll_interval_raises — poll_interval <= 0 → ValueError
 
-TestFixedFractionSizer (4개):
-- test_returns_fixed_fraction         — fraction=0.3 항상 0.3 반환
-- test_full_capital_valid             — fraction=1.0 허용
-- test_zero_fraction_raises           — fraction=0.0 → ValueError
-- test_over_one_raises                — fraction=1.1 → ValueError
+TestPollingDataFeedSubscribe (2개):
+- test_subscribe_appends_callback     — subscribe() 후 _callbacks 길이 확인
+- test_multiple_callbacks_all_called  — 콜백 2개 등록 → _fetch_and_notify() 후 둘 다 호출 확인
 
-TestKellyCriterionSizer (7개):
-- test_no_trades_returns_zero         — [] → 0.0
-- test_one_trade_returns_zero         — [0.1] (1개) → 0.0
-- test_only_wins_returns_max_fraction — 손실 없음 → max_fraction
-- test_only_losses_returns_zero       — 이익 없음 → 0.0
-- test_negative_f_star_clips_to_zero  — 기대값 음수 전략 → 0.0
-- test_exceeds_max_fraction_clips     — f* > 0.25 → 0.25
-- test_invalid_max_fraction_raises    — max_fraction=0 또는 1.5 → ValueError
+TestPollingDataFeedNewDataDetection (3개):
+- test_first_fetch_delivers_all_rows   — _last_ts=None → 전체 df 전달
+- test_no_new_rows_skips_callback      — 동일 timestamp 재조회 → 콜백 미호출
+- test_only_new_rows_delivered         — 새 캔들만 슬라이스해서 전달
 
-TestPositionSizerIntegration (2개):
-- test_engine_with_fixed_fraction_sizer_reduces_portfolio
-  — FixedFractionSizer(0.5) 적용 시 100% 투입 대비 변동 확인
-- test_engine_none_sizer_backward_compatible
-  — position_sizer=None → 기존 동작과 동일 결과
+TestPollingDataFeedFetchError (2개):
+- test_exception_does_not_crash        — fetcher에서 RuntimeError → _fetch_and_notify 정상 반환
+- test_empty_dataframe_skips_callback  — 빈 DataFrame → 콜백 미호출
+
+TestPollingDataFeedLifecycle (2개):
+- test_start_stop_no_error             — start() + stop() 예외 없이 완료
+- test_context_manager_auto_stop       — with 블록 탈출 시 stop() 자동 호출 확인
 ```
+
+**테스트 헬퍼 패턴**:
+```python
+def _make_sample_df(start: str = "2024-01-02 09:30", periods: int = 3) -> pd.DataFrame:
+    idx = pd.date_range(start, periods=periods, freq="5min")
+    return pd.DataFrame(
+        {"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.5, "Volume": 10000},
+        index=idx,
+    )
+```
+
+`_fetch_and_notify()`를 직접 호출하는 방식으로 스레드 타이밍 의존성을 없애고 단위 테스트를 안정적으로 유지할 것.
 
 파일 단위 검증:
 ```bash
-uv run ruff check src/smart_stock/backtesting/position_sizer.py && uv run mypy src/smart_stock/backtesting/position_sizer.py --strict
+uv run ruff check src/smart_stock/data/feed.py && uv run mypy src/smart_stock/data/feed.py --strict
 ```
 
 ---
@@ -378,10 +288,10 @@ uv run ruff check src/smart_stock/backtesting/position_sizer.py && uv run mypy s
 #### Agent-검증 (구현 완료 후 동일 Agent가 순서대로 실행)
 
 ```bash
-uv run ruff check src/smart_stock/backtesting/
-uv run ruff format src/smart_stock/backtesting/
-uv run mypy src/smart_stock/backtesting/ --strict
-uv run pytest tests/test_position_sizer.py -v
+uv run ruff check src/smart_stock/data/
+uv run ruff format src/smart_stock/data/
+uv run mypy src/smart_stock/data/ --strict
+uv run pytest tests/test_data_feed.py -v
 uv run pytest tests/ -v
 ```
 
@@ -392,13 +302,15 @@ uv run pytest tests/ -v
 
 ## 완료 기준
 
-- [ ] `src/smart_stock/backtesting/position_sizer.py` 신규 생성
-- [ ] `BacktestEngine(position_sizer=FixedFractionSizer(0.5))` 동작
-- [ ] `BacktestEngine(position_sizer=KellyCriterionSizer())` 동작
-- [ ] `position_sizer=None` 시 기존 동작 완전 보존 (회귀 없음)
+- [ ] `src/smart_stock/data/feed.py` 신규 생성
+- [ ] `DataFeed`, `PollingDataFeed` 퍼블릭 API 재노출
+- [ ] `PollingDataFeed(fetcher=mock)._fetch_and_notify()` → 콜백 호출 동작
+- [ ] 새 캔들만 슬라이스하여 중복 전달 방지
+- [ ] fetch 예외 시 크래시 없이 건너뜀
+- [ ] context manager(`with` 블록) 동작
 - [ ] ruff check 통과
 - [ ] ruff format 적용
 - [ ] mypy --strict 통과
-- [ ] pytest 신규 테스트 전체 통과 (~17개)
-- [ ] pytest 전체 테스트 스위트 통과 (기존 193개 보존)
+- [ ] pytest 신규 테스트 전체 통과 (~12개)
+- [ ] pytest 전체 테스트 스위트 통과 (기존 210개 보존)
 - [ ] `RESULT.md` 갱신 완료
