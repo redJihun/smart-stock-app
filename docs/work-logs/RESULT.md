@@ -5,7 +5,7 @@
 
 ---
 
-## 현재 작업: TASK-010 — 전략 비교 대시보드 노트북 구현 (FR-104)
+## 현재 작업: TASK-011 — 거래 비용 모델 구현 (FR-201)
 
 **상태**: ✅ 완료
 
@@ -13,32 +13,69 @@
 
 ## Phase 2: 구현
 
-### Agent-구현dashboard
-**파일**: `notebooks/03-strategy-comparison.ipynb`
+### Agent-구현cost
+**파일**:
+- `src/smart_stock/backtesting/cost_model.py` (신규, 59줄)
+- `src/smart_stock/backtesting/engine.py` (수정)
+- `src/smart_stock/backtesting/__init__.py` (수정)
+- `tests/test_cost_model.py` (신규, 190줄)
+
 **상태**: ✅ 완료
 
 **구현 내용**:
-- 30셀 노트북 신규 생성 (코드 15셀 + 마크다운 15셀)
-- 5개 전략 백테스트: SMA(-11.27%), RSI(+4.23%), MACD(-16.00%), Bollinger(+3.09%), Composite(-7.52%)
-- 성과 비교 테이블: 수익률/MDD/샤프지수/승률/거래횟수
-- 시각화 5종: 포트폴리오 가치 곡선, 드로우다운, SMA 오버레이, RSI 서브플롯, 볼린저 밴드
-- SMA 파라미터 스캔: 9조합 중 8개 유효(short < long) 성과 표
-- CompositeStrategy 가중치 민감도: (0.3, 0.7) / (0.5, 0.5) / (0.7, 0.3) 비교
-- 신호 시각화: 최고 샤프(RSI 0.27) 전략 매수/매도 마커 오버레이
-- 결론 섹션: 전략별 강/약점 표 + 실무 활용 가이드
+- `TradingCost` dataclass 구현: 수수료, 세금, 슬리피지 비용 모델
+  - 기본값 (한국 주식): commission 0.015%, tax 0.18%, slippage 0.05%
+  - `buy_cost_rate()`: commission + slippage
+  - `sell_cost_rate()`: commission + tax + slippage
+  - 음수 값 검증 (`__post_init__`)
+- `BacktestEngine` 수정:
+  - `__init__`에 `cost_model: TradingCost | None` 파라미터 추가
+  - `_build_portfolio()` 반환 타입: `pd.Series` → `tuple[pd.Series, float]`
+  - `_build_portfolio()` 내 비용 계산 로직: pos_diff를 기반으로 매수/매도 비용 적용
+  - `run()`에서 _build_portfolio 반환값 언패킹 및 total_cost 전달
+- `BacktestResult`에 `total_cost: float = 0.0` 필드 추가 (backward-compatible)
+- `__init__.py`에 `TradingCost` 재노출
+- 신규 테스트 13개:
+  - TradingCost 초기화 (6개): 기본값, 커스텀, 음수 검증, 0값 허용
+  - TradingCost 비용율 (2개): buy_cost_rate, sell_cost_rate
+  - BacktestEngine 통합 (5개): None 일치, 비용 적용 비교, 0값 일치, 거래 있을 때 비용, 거래 없을 때 비용
 
 ---
 
 ## Phase 3: 검증
 
-### jupyter nbconvert (전체 실행)
+### ruff check
 ```bash
-uv run jupyter nbconvert --to notebook --execute \
-  --ExecutePreprocessor.timeout=120 \
-  notebooks/03-strategy-comparison.ipynb \
-  --output notebooks/03-strategy-comparison.ipynb
+uv run ruff check src/smart_stock/backtesting/
 ```
-**결과**: ✅ 성공 — 전체 셀 오류 없이 실행 완료, 출력 데이터 존재 확인
+**결과**: ✅ All checks passed!
+
+### ruff format
+```bash
+uv run ruff format src/smart_stock/backtesting/
+```
+**결과**: ✅ 5 files left unchanged
+
+### mypy strict
+```bash
+uv run mypy src/smart_stock/backtesting/ --strict
+```
+**결과**: ✅ Success: no issues found in 5 source files
+
+### pytest (신규 테스트)
+```bash
+uv run pytest tests/test_cost_model.py -v
+```
+**결과**: ✅ 13 passed in 0.48s
+- TestTradingCostInit: 6개 통과
+- TestTradingCostRates: 2개 통과
+- TestBacktestEngineWithCost: 5개 통과
+
+### pytest (전체 테스트 스위트)
+```bash
+uv run pytest tests/ -v
+```
+**결과**: ✅ 193 passed in 0.72s (기존 180 + 신규 13)
 
 ---
 
@@ -47,10 +84,13 @@ uv run jupyter nbconvert --to notebook --execute \
 **상태**: ✅ 완료
 
 **완료 기준 체크리스트**:
-- [x] `notebooks/03-strategy-comparison.ipynb` 신규 생성
-- [x] 5개 전략 성과 비교 테이블 출력
-- [x] 포트폴리오 가치 곡선 + 드로우다운 비교 시각화
-- [x] 기술적 지표 오버레이 차트 (SMA, RSI, 볼린저 밴드)
-- [x] SMA 파라미터 스캔 결과 표
-- [x] 노트북 오류 없이 전체 실행 완료
+- [x] `src/smart_stock/backtesting/cost_model.py` 신규 생성
+- [x] `BacktestEngine(cost_model=TradingCost())` 동작
+- [x] 비용 적용 시 포트폴리오 값 < 비용 미적용 포트폴리오 값 (test_cost_applied_reduces_portfolio 검증)
+- [x] `cost_model=None` 시 기존 동작 완전 보존 (회귀 없음, 193개 테스트 전체 통과)
+- [x] ruff check 통과
+- [x] ruff format 적용
+- [x] mypy --strict 통과
+- [x] pytest 신규 테스트 전체 통과 (13개)
+- [x] pytest 전체 테스트 스위트 통과 (기존 180개 보존 + 신규 13개 = 193개)
 - [x] `RESULT.md` 갱신 완료

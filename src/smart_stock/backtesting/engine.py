@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
+from smart_stock.backtesting.cost_model import TradingCost
 from smart_stock.backtesting.metrics import (
     max_drawdown,
     sharpe_ratio,
@@ -33,6 +34,8 @@ class BacktestResult:
         승률 (%, trade_count==0이면 NaN)
     portfolio : pd.Series
         일별 포트폴리오 가치 (DatetimeIndex)
+    total_cost : float, optional
+        총 거래 비용 금액 (초기 자본 대비, 기본값: 0.0)
     """
 
     total_return: float
@@ -41,18 +44,25 @@ class BacktestResult:
     trade_count: int
     win_rate: float
     portfolio: pd.Series
+    total_cost: float = 0.0
 
 
 class BacktestEngine:
     """백테스팅 엔진."""
 
-    def __init__(self, initial_capital: float = 1_000_000.0) -> None:
+    def __init__(
+        self,
+        initial_capital: float = 1_000_000.0,
+        cost_model: TradingCost | None = None,
+    ) -> None:
         """초기화.
 
         Parameters
         ----------
         initial_capital : float, optional
             초기 자본금 (기본값: 1,000,000)
+        cost_model : TradingCost | None, optional
+            거래 비용 모델 (기본값: None, 비용 미적용)
 
         Raises
         ------
@@ -62,6 +72,7 @@ class BacktestEngine:
         if initial_capital <= 0:
             raise ValueError("initial_capital은 0보다 커야 합니다.")
         self.initial_capital = initial_capital
+        self.cost_model = cost_model
 
     def run(self, df: pd.DataFrame, strategy: BaseStrategy) -> BacktestResult:
         """백테스트를 실행하고 결과를 반환합니다.
@@ -84,7 +95,7 @@ class BacktestEngine:
             데이터가 비어있거나 필수 열이 없는 경우
         """
         signals = strategy.generate_signals(df)
-        portfolio = self._build_portfolio(df, signals)
+        portfolio, total_cost = self._build_portfolio(df, signals)
         trade_returns = self._extract_trades(df, signals)
 
         return BacktestResult(
@@ -94,14 +105,15 @@ class BacktestEngine:
             trade_count=len(trade_returns),
             win_rate=win_rate(trade_returns),
             portfolio=portfolio,
+            total_cost=total_cost,
         )
 
     def _build_portfolio(
         self,
         df: pd.DataFrame,
         signals: pd.Series,
-    ) -> pd.Series:
-        """포트폴리오 가치 시계열을 계산합니다.
+    ) -> tuple[pd.Series, float]:
+        """포트폴리오 가치 시계열과 총 비용 금액을 계산합니다.
 
         look-ahead bias를 방지하기 위해 시그널을 1일 지연(shift(1))해 적용합니다.
 
@@ -114,13 +126,25 @@ class BacktestEngine:
 
         Returns
         -------
-        pd.Series
-            일별 포트폴리오 가치
+        tuple[pd.Series, float]
+            (일별 포트폴리오 가치, 총 거래 비용 금액)
         """
         position = signals.shift(1).fillna(0)
+        pos_diff = position.diff().fillna(0)
         daily_returns = df["Close"].pct_change().fillna(0)
         strategy_returns = position * daily_returns
-        return self.initial_capital * (1 + strategy_returns).cumprod()
+
+        total_cost = 0.0
+        if self.cost_model is not None:
+            cost_returns = pd.Series(0.0, index=df.index)
+            cost_returns[pos_diff > 0] = -self.cost_model.buy_cost_rate()
+            cost_returns[pos_diff < 0] = -self.cost_model.sell_cost_rate()
+            strategy_returns = strategy_returns + cost_returns
+            # 총 비용 금액 = 비용율 합계 × 초기 자본 (근사값)
+            total_cost = float(cost_returns.abs().sum() * self.initial_capital)
+
+        portfolio = self.initial_capital * (1 + strategy_returns).cumprod()
+        return portfolio, total_cost
 
     def _extract_trades(
         self,
