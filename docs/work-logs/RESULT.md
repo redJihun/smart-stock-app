@@ -5,7 +5,7 @@
 
 ---
 
-## 현재 작업: TASK-011 — 거래 비용 모델 구현 (FR-201)
+## 현재 작업: TASK-012 — 포지션 사이징 구현 (FR-202)
 
 **상태**: ✅ 완료
 
@@ -13,32 +13,24 @@
 
 ## Phase 2: 구현
 
-### Agent-구현cost
+### Agent-구현sizer
 **파일**:
-- `src/smart_stock/backtesting/cost_model.py` (신규, 59줄)
+- `src/smart_stock/backtesting/position_sizer.py` (신규)
 - `src/smart_stock/backtesting/engine.py` (수정)
 - `src/smart_stock/backtesting/__init__.py` (수정)
-- `tests/test_cost_model.py` (신규, 190줄)
+- `tests/test_position_sizer.py` (신규)
 
 **상태**: ✅ 완료
 
 **구현 내용**:
-- `TradingCost` dataclass 구현: 수수료, 세금, 슬리피지 비용 모델
-  - 기본값 (한국 주식): commission 0.015%, tax 0.18%, slippage 0.05%
-  - `buy_cost_rate()`: commission + slippage
-  - `sell_cost_rate()`: commission + tax + slippage
-  - 음수 값 검증 (`__post_init__`)
-- `BacktestEngine` 수정:
-  - `__init__`에 `cost_model: TradingCost | None` 파라미터 추가
-  - `_build_portfolio()` 반환 타입: `pd.Series` → `tuple[pd.Series, float]`
-  - `_build_portfolio()` 내 비용 계산 로직: pos_diff를 기반으로 매수/매도 비용 적용
-  - `run()`에서 _build_portfolio 반환값 언패킹 및 total_cost 전달
-- `BacktestResult`에 `total_cost: float = 0.0` 필드 추가 (backward-compatible)
-- `__init__.py`에 `TradingCost` 재노출
-- 신규 테스트 13개:
-  - TradingCost 초기화 (6개): 기본값, 커스텀, 음수 검증, 0값 허용
-  - TradingCost 비용율 (2개): buy_cost_rate, sell_cost_rate
-  - BacktestEngine 통합 (5개): None 일치, 비용 적용 비교, 0값 일치, 거래 있을 때 비용, 거래 없을 때 비용
+- `PositionSizer` ABC: `calculate()` 추상 메서드 정의
+- `FixedAmountSizer`: 고정 금액 투입 (0~1.0 범위로 클리핑)
+- `FixedFractionSizer`: 고정 비율 투입 (항상 동일 비율)
+- `KellyCriterionSizer`: Kelly Criterion 기반 동적 투입 (max_fraction 상한)
+- `BacktestEngine.__init__`: `position_sizer` 파라미터 추가 (backward-compatible)
+- `BacktestEngine._compute_sized_position()`: 순차 루프로 거래별 投入비율 계산
+- `BacktestEngine._build_portfolio()`: position_sizer 분기 추가 (None이면 기존 경로)
+- `__init__.py`: 4개 클래스 알파벳순 재노출
 
 ---
 
@@ -48,34 +40,31 @@
 ```bash
 uv run ruff check src/smart_stock/backtesting/
 ```
-**결과**: ✅ All checks passed!
+**결과**: ✅ 통과 (All checks passed!)
 
 ### ruff format
 ```bash
 uv run ruff format src/smart_stock/backtesting/
 ```
-**결과**: ✅ 5 files left unchanged
+**결과**: ✅ 통과 (6 files left unchanged)
 
 ### mypy strict
 ```bash
 uv run mypy src/smart_stock/backtesting/ --strict
 ```
-**결과**: ✅ Success: no issues found in 5 source files
+**결과**: ✅ 통과 (Success: no issues found in 6 source files)
 
 ### pytest (신규 테스트)
 ```bash
-uv run pytest tests/test_cost_model.py -v
+uv run pytest tests/test_position_sizer.py -v
 ```
-**결과**: ✅ 13 passed in 0.48s
-- TestTradingCostInit: 6개 통과
-- TestTradingCostRates: 2개 통과
-- TestBacktestEngineWithCost: 5개 통과
+**결과**: ✅ 통과 (17 passed in 0.30s)
 
 ### pytest (전체 테스트 스위트)
 ```bash
 uv run pytest tests/ -v
 ```
-**결과**: ✅ 193 passed in 0.72s (기존 180 + 신규 13)
+**결과**: ✅ 통과 (210 passed in 0.68s) — 193 기존 + 17 신규
 
 ---
 
@@ -84,13 +73,19 @@ uv run pytest tests/ -v
 **상태**: ✅ 완료
 
 **완료 기준 체크리스트**:
-- [x] `src/smart_stock/backtesting/cost_model.py` 신규 생성
-- [x] `BacktestEngine(cost_model=TradingCost())` 동작
-- [x] 비용 적용 시 포트폴리오 값 < 비용 미적용 포트폴리오 값 (test_cost_applied_reduces_portfolio 검증)
-- [x] `cost_model=None` 시 기존 동작 완전 보존 (회귀 없음, 193개 테스트 전체 통과)
+- [x] `src/smart_stock/backtesting/position_sizer.py` 신규 생성
+- [x] `BacktestEngine(position_sizer=FixedFractionSizer(0.5))` 동작
+- [x] `BacktestEngine(position_sizer=KellyCriterionSizer())` 동작
+- [x] `position_sizer=None` 시 기존 동작 완전 보존 (회귀 없음)
 - [x] ruff check 통과
 - [x] ruff format 적용
 - [x] mypy --strict 통과
-- [x] pytest 신규 테스트 전체 통과 (13개)
-- [x] pytest 전체 테스트 스위트 통과 (기존 180개 보존 + 신규 13개 = 193개)
+- [x] pytest 신규 테스트 전체 통과 (17개)
+- [x] pytest 전체 테스트 스위트 통과 (210개, 기존 193개 보존)
 - [x] `RESULT.md` 갱신 완료
+
+**주요 성과**:
+- 포지션 사이징 프레임워크 완성 (4개 클래스, 179줄)
+- Kelly Criterion 구현으로 동적 금액 조정 가능
+- Backward-compatible: position_sizer=None 시 기존 동작 유지
+- 17개 신규 테스트 + 회귀 테스트 모두 통과

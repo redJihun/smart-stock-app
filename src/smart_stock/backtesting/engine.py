@@ -13,6 +13,7 @@ from smart_stock.backtesting.metrics import (
     total_return,
     win_rate,
 )
+from smart_stock.backtesting.position_sizer import PositionSizer
 from smart_stock.strategies.base_strategy import BaseStrategy
 
 
@@ -54,6 +55,7 @@ class BacktestEngine:
         self,
         initial_capital: float = 1_000_000.0,
         cost_model: TradingCost | None = None,
+        position_sizer: PositionSizer | None = None,
     ) -> None:
         """초기화.
 
@@ -63,6 +65,8 @@ class BacktestEngine:
             초기 자본금 (기본값: 1,000,000)
         cost_model : TradingCost | None, optional
             거래 비용 모델 (기본값: None, 비용 미적용)
+        position_sizer : PositionSizer | None, optional
+            포지션 사이징 전략 (기본값: None, 자본 100% 투입)
 
         Raises
         ------
@@ -73,6 +77,7 @@ class BacktestEngine:
             raise ValueError("initial_capital은 0보다 커야 합니다.")
         self.initial_capital = initial_capital
         self.cost_model = cost_model
+        self.position_sizer = position_sizer
 
     def run(self, df: pd.DataFrame, strategy: BaseStrategy) -> BacktestResult:
         """백테스트를 실행하고 결과를 반환합니다.
@@ -108,6 +113,56 @@ class BacktestEngine:
             total_cost=total_cost,
         )
 
+    def _compute_sized_position(
+        self,
+        df: pd.DataFrame,
+        signals: pd.Series,
+    ) -> pd.Series:
+        """PositionSizer를 적용하여 포지션 비율 시계열을 계산합니다.
+
+        거래 진입 시점마다 PositionSizer.calculate()를 호출하여
+        해당 거래의 투입 비율을 결정합니다.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            OHLCV 데이터
+        signals : pd.Series
+            거래 신호 (0 또는 1)
+
+        Returns
+        -------
+        pd.Series
+            포지션 비율 시계열 (0.0~1.0)
+        """
+        sizer = self.position_sizer
+        assert sizer is not None
+
+        shifted = signals.shift(1).fillna(0)
+        pos_diff = shifted.diff().fillna(0)
+
+        fractions = pd.Series(0.0, index=df.index)
+        completed_trade_returns: list[float] = []
+        current_fraction = 0.0
+        entry_price: float | None = None
+
+        for idx in df.index:
+            diff = float(pos_diff.loc[idx])
+            if diff > 0:
+                current_fraction = sizer.calculate(
+                    self.initial_capital, completed_trade_returns
+                )
+                entry_price = float(df["Close"].loc[idx])
+            elif diff < 0:
+                if entry_price is not None:
+                    trade_ret = float(df["Close"].loc[idx]) / entry_price - 1.0
+                    completed_trade_returns.append(trade_ret)
+                current_fraction = 0.0
+                entry_price = None
+            fractions.loc[idx] = current_fraction
+
+        return fractions
+
     def _build_portfolio(
         self,
         df: pd.DataFrame,
@@ -129,7 +184,10 @@ class BacktestEngine:
         tuple[pd.Series, float]
             (일별 포트폴리오 가치, 총 거래 비용 금액)
         """
-        position = signals.shift(1).fillna(0)
+        if self.position_sizer is not None:
+            position = self._compute_sized_position(df, signals)
+        else:
+            position = signals.shift(1).fillna(0)
         pos_diff = position.diff().fillna(0)
         daily_returns = df["Close"].pct_change().fillna(0)
         strategy_returns = position * daily_returns

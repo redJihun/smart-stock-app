@@ -9,10 +9,20 @@ from smart_stock.backtesting.metrics import (
     win_rate,
 )
 from smart_stock.backtesting.pipeline import run_and_track
+from smart_stock.backtesting.position_sizer import (
+    FixedAmountSizer,
+    FixedFractionSizer,
+    KellyCriterionSizer,
+    PositionSizer,
+)
 
 __all__ = [
     "BacktestEngine",
     "BacktestResult",
+    "FixedAmountSizer",
+    "FixedFractionSizer",
+    "KellyCriterionSizer",
+    "PositionSizer",
     "TradingCost",
     "max_drawdown",
     "run_and_track",
