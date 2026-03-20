@@ -1,66 +1,5 @@
-# TASK.md — 실행자 작업 지시서
+"""페이퍼 트레이딩 실행기 모듈."""
 
-> 관리자(Sonnet) 세션이 작성 → 실행자(Haiku) 세션이 읽고 실행
-> 완료 후 결과는 `RESULT.md`에 기록
-
----
-
-## 현재 작업
-
-### 작업 ID: TASK-014
-### 제목: 페이퍼 트레이딩 구현 (FR-204)
-
-### 배경
-
-FR-203(실시간 데이터 피드)이 완료되어 전제 조건이 갖추어졌다.
-FR-204는 DataFeed로 수신한 실시간 캔들에 전략을 적용하고,
-가상 포트폴리오로 매수/매도를 시뮬레이션하는 PaperTrader를 구현한다.
-이것이 Go-Live Gate 데이터(시그널 500건, 3개월 기간) 축적의 핵심 단계다.
-
----
-
-## 참고 파일 (먼저 읽을 것)
-
-- `src/smart_stock/data/feed.py` — DataFeed ABC, `__exit__` 시그니처 패턴
-- `src/smart_stock/backtesting/engine.py` — `initial_capital` 검증, PositionSizer 연동 패턴
-- `src/smart_stock/backtesting/cost_model.py` — TradingCost 필드 및 메서드
-- `src/smart_stock/backtesting/position_sizer.py` — PositionSizer ABC, calculate() 계약
-- `src/smart_stock/tracking/logger.py` — SignalRecord 필드 구조, SignalLogger.log()
-- `src/smart_stock/strategies/base_strategy.py` — BaseStrategy ABC
-- `tests/test_data_feed.py` — `_on_candle()` 직접 호출 테스트 패턴
-- `.claude/rules/task-cycle.md` — 실행자 금지 행동 확인
-
----
-
-## 구현 명세
-
-> 공통 제약: `.claude/rules/task-cycle.md` 참조 (from __future__, 500줄, mypy strict 등)
-
----
-
-### Phase 2: 구현 (단일 Agent)
-
----
-
-#### Agent-구현trading → 3개 파일 신규 생성
-
----
-
-##### 1. `src/smart_stock/trading/__init__.py` (신규)
-
-```python
-"""페이퍼 트레이딩 모듈."""
-
-from smart_stock.trading.paper_trader import PaperTrader
-
-__all__ = ["PaperTrader"]
-```
-
----
-
-##### 2. `src/smart_stock/trading/paper_trader.py` (신규, ~180줄)
-
-```python
 from __future__ import annotations
 
 import pandas as pd
@@ -70,11 +9,8 @@ from smart_stock.backtesting.position_sizer import PositionSizer
 from smart_stock.data.feed import DataFeed
 from smart_stock.strategies.base_strategy import BaseStrategy
 from smart_stock.tracking.logger import SignalLogger, SignalRecord
-```
 
-**PaperTrader 클래스**:
 
-```python
 class PaperTrader:
     """가상 포트폴리오 기반 페이퍼 트레이딩 실행기.
 
@@ -133,11 +69,7 @@ class PaperTrader:
         self._prev_signal: int = 0
         self._completed_trade_returns: list[float] = []
         self._started: bool = False
-```
 
-**퍼블릭 API**:
-
-```python
     @property
     def portfolio_value(self) -> float:
         """현재 포트폴리오 가치 (현금 + 보유 주식 평가액)."""
@@ -178,11 +110,7 @@ class PaperTrader:
         exc_tb: object,
     ) -> None:
         self.stop()
-```
 
-**_on_candle 핵심 로직**:
-
-```python
     def _on_candle(self, df: pd.DataFrame) -> None:
         """새 캔들 수신 시 호출되는 콜백.
 
@@ -196,7 +124,8 @@ class PaperTrader:
             self._history = df.copy()
         else:
             combined = pd.concat([self._history, df])
-            self._history = combined[~combined.index.duplicated(keep="last")].sort_index()
+            mask = ~combined.index.duplicated(keep="last")
+            self._history = combined[mask].sort_index()
 
         # 2. last_price 갱신
         self._last_price = float(self._history["Close"].iloc[-1])
@@ -230,11 +159,7 @@ class PaperTrader:
 
         # 6. prev_signal 갱신
         self._prev_signal = curr_signal
-```
 
-**_execute_buy / _execute_sell**:
-
-```python
     def _execute_buy(self, price: float) -> None:
         """가상 매수 실행.
 
@@ -285,121 +210,3 @@ class PaperTrader:
 
         self._shares = 0.0
         self._entry_price = None
-```
-
-파일 단위 검증:
-```bash
-uv run ruff check src/smart_stock/trading/paper_trader.py && uv run mypy src/smart_stock/trading/paper_trader.py --strict
-```
-
----
-
-##### 3. `tests/test_paper_trader.py` (신규, 15개 테스트)
-
-**테스트 헬퍼**:
-```python
-def _make_sample_df(
-    start: str = "2024-01-02 09:30",
-    periods: int = 1,
-    close_prices: list[float] | None = None,
-) -> pd.DataFrame:
-    idx = pd.date_range(start, periods=periods, freq="5min")
-    closes = close_prices if close_prices is not None else [100.0] * periods
-    return pd.DataFrame(
-        {
-            "Open": closes,
-            "High": [p + 1.0 for p in closes],
-            "Low": [p - 1.0 for p in closes],
-            "Close": closes,
-            "Volume": [10_000] * periods,
-        },
-        index=idx,
-    )
-
-def _make_mock_strategy(signals: list[int]) -> BaseStrategy:
-    """spec=BaseStrategy mock — generate_signals가 hist 길이에 맞춘 Series 반환."""
-    strategy = MagicMock(spec=BaseStrategy)
-    strategy.name = "MockStrategy"
-
-    def _gen(df: pd.DataFrame) -> pd.Series:
-        n = len(df)
-        padded = signals + [signals[-1]] * max(0, n - len(signals))
-        return pd.Series(padded[:n], index=df.index, dtype=float)
-
-    strategy.generate_signals.side_effect = _gen
-    return strategy
-
-def _make_mock_feed() -> DataFeed:
-    return MagicMock(spec=DataFeed)
-```
-
-**테스트 클래스**:
-```
-TestPaperTraderInit (3개):
-- test_initial_portfolio_value_equals_capital — portfolio_value == initial_capital
-- test_initial_position_is_zero — position == 0
-- test_invalid_capital_raises — initial_capital=0 → ValueError
-
-TestPaperTraderBuy (3개):
-- test_buy_increases_shares — 매수 후 _shares > 0
-- test_buy_decreases_cash — 매수 후 _cash < initial_capital
-- test_buy_with_cost_model — shares == invest / (price * (1 + buy_cost_rate)) 검증
-
-TestPaperTraderSell (3개):
-- test_sell_clears_shares — 매도 후 _shares == 0
-- test_sell_records_trade_return — trade_return == 110/100 - 1 == 0.1
-- test_sell_with_cost_model — cash == shares * price * (1 - sell_cost_rate) 검증
-
-TestPaperTraderSignalFlow (3개):
-- test_no_signal_change_no_action — 신호 변화 없음 → shares==0, cash 불변
-- test_buy_then_sell_portfolio_value — 매수(100)→매도(110) 후 portfolio_value > initial_capital
-- test_logger_called_on_signal — logger.log assert_called_once()
-
-TestPaperTraderLifecycle (3개):
-- test_start_stop_no_error — feed.start/stop 각 1회 호출
-- test_context_manager — with 탈출 후 feed.stop 호출
-- test_double_start_no_error — start() 2번 호출 → feed.subscribe 1회만 호출
-```
-
-**매수/매도 시그널 생성 패턴**:
-- 시그널 prev→curr 전환 만들기:
-  - `_on_candle(df1)` 호출 → `_prev_signal = signals[-1 at len=1]`
-  - `_on_candle(df2)` 호출 → `curr_signal = signals[-1 at len=2]` → 변화 감지
-- 예: `signals=[0,1]` 이면 두 번째 호출에서 매수 트리거
-- 예: `signals=[0,1,0]` 이면 세 번째 호출에서 매도 트리거
-
----
-
-### Phase 3: 검증
-
-#### Agent-검증 (구현 완료 후 동일 Agent가 순서대로 실행)
-
-```bash
-uv run ruff check src/smart_stock/trading/
-uv run ruff format src/smart_stock/trading/
-uv run mypy src/smart_stock/trading/ --strict
-uv run pytest tests/test_paper_trader.py -v
-uv run pytest tests/ -v
-```
-
-오류 발생 시 해당 파일 수정 후 재실행.
-결과를 `RESULT.md`의 각 섹션에 기록.
-
----
-
-## 완료 기준
-
-- [ ] `src/smart_stock/trading/__init__.py` 신규 생성
-- [ ] `src/smart_stock/trading/paper_trader.py` 신규 생성
-- [ ] `PaperTrader` 퍼블릭 API 재노출
-- [ ] `_on_candle()` 직접 호출 → 매수/매도 실행 동작
-- [ ] cost_model 적용 시 비용 차감 검증
-- [ ] position_sizer 적용 시 fraction 반영
-- [ ] context manager(`with` 블록) 동작
-- [ ] double start 중복 방지 (subscribe 1회)
-- [ ] ruff check 통과
-- [ ] ruff format 적용
-- [ ] mypy --strict 통과
-- [ ] pytest 신규 테스트 전체 통과 (15개)
-- [ ] pytest 전체 테스트 스위트 통과 (기존 222개 보존)
-- [ ] `RESULT.md` 갱신 완료
