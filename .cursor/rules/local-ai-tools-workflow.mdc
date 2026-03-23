@@ -1,0 +1,60 @@
+---
+description: Perplexity·Claude·Cursor·Jira MCP 등 AI 도구 역할과 워크플로우 요약
+alwaysApply: false
+---
+
+# AI 도구 워크플로우
+
+## 핵심 역할 분리: 관리자(Claude Code CLI) ↔ 실행자(Cursor)
+
+> 상세 규칙: `agent-workflow.mdc`, `task-cycle.mdc` 참조
+
+| 도구 | 역할 | 담당 작업 |
+|------|------|----------|
+| **Claude Code CLI** | 관리자 (고지능) | 설계 확정, TASK.md 작성, 코드 검수, 커밋 제안 |
+| **Cursor 에이전트** | 실행자 (구현) | TASK.md 읽고 구현, RESULT.md 작성, 검증 실행 |
+| **MySQL MCP** | DB 조회 (Claude CLI 전용) | 스키마 확인, 데이터 검증, 쿼리 테스트 |
+
+**기본 흐름**:
+1. Claude Code CLI에서 `EnterPlanMode` → 설계 확정 → `docs/work-logs/TASK.md` 작성
+2. Cursor 에이전트에서 `TASK.md` 읽고 구현 → `docs/work-logs/RESULT.md` 작성
+3. Claude Code CLI에서 `RESULT.md` 검토 → 코드 검수 → 커밋 제안
+
+## 도구별 역할 (전체)
+
+- **Claude Code CLI (관리자)**: 아키텍처 설계, 작업 분해, TASK.md 작성, 코드 검수(버그·설계 위반 탐지), 커밋 메시지 작성.
+- **Cursor 에이전트 (실행자)**: 설계가 확정된 코드 구현, 반복 코드 생성(테스트·보일러플레이트), 린트/포맷 수정, RESULT.md 기록.
+- **Perplexity(웹)**: 심층 리서치 전용. 결과를 `docs/research/YYMMDD-주제.md`로 저장 후 Cursor/Claude에서 참조.
+- **Jira MCP (`user-jira`)**: ISRN 티켓 조회·상태 확인. 구현/수정은 Cursor/Claude에서 처리.
+- **MySQL MCP (`mcp__mysql__mysql_query`)**: DB 직접 조회 전용 (Claude Code CLI에서 사용). 스키마 확인, 데이터 검증, 쿼리 테스트에 활용. DB: `manufacture_v2_0_test`.
+
+## Claude Code CLI에서 해야 하는 작업
+
+```
+✅ Claude Code CLI:
+  - 아키텍처 결정, ADR 작성
+  - TASK.md 작성 (구체적 파일/지시 포함)
+  - 코드 검수 (버그 찾기, 설계 위반 탐지)
+  - 복잡한 알고리즘 설계
+  - 커밋 메시지 최종 작성
+
+✅ Cursor 에이전트:
+  - 설계가 완료된 코드 구현
+  - 반복적 코드 생성 (테스트, 보일러플레이트)
+  - 린트/포맷 수정
+  - 문서 갱신
+  - RESULT.md 기록
+```
+
+## Cursor Ask / Agent 모드 선택
+
+- 한 파일, 작은 수정: **Agent 바로** 사용.
+- 여러 파일, 라우터/도메인 구조 변경: **TASK.md 확인 후 Agent로 구현**.
+- 버그 수정: Ask에서 원인 후보 정리 → Agent에서 수정·테스트.
+
+## 토큰 절약 원칙 (도구 공통)
+
+- 같은 코드/로그를 반복해서 붙이지 않고, **경로·라인만 알려주고 도구의 Read 기능을 활용**한다.
+- 세션 시작 시에는 장문의 설명 대신 `.cursor/prompt-templates/*.md`에 있는 2줄 템플릿을 우선 사용한다.
+- 대규모 설계 변경/리팩토링 전에는 Claude Code CLI에서 목표·범위를 먼저 좁혀 Cursor가 헛도는 리플랜을 줄인다.
+

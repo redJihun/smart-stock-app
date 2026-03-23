@@ -1,0 +1,54 @@
+---
+description: uv 기반 로컬 실행환경 구성 및 서버 기동 방법
+alwaysApply: false
+globs: requirements.txt
+---
+
+# uv 실행환경 구성
+
+## 환경 현황
+
+- **가상환경**: `.venv/` (Python 3.11.15, uv 관리)
+- **Python 캐시**: `.uv_py_versions/` (프로젝트 루트, `.gitignore` 미포함 주의)
+- **의존성**: `requirements.txt` (pip 호환, 73개 패키지)
+
+## 최초 환경 구성
+
+```bash
+# Python 3.11 설치 (최초 1회)
+UV_PYTHON_INSTALL_DIR=.uv_py_versions uv python install 3.11
+
+# 가상환경 생성
+uv venv --python 3.11 .venv
+
+# 의존성 설치
+source .venv/bin/activate
+uv pip install -r requirements.txt
+```
+
+## 서버 기동
+
+```bash
+source .venv/bin/activate
+uvicorn issuance_be_fastapi.main:app --host 0.0.0.0 --port 9999 --reload
+```
+
+## DB 연결 동작 방식
+
+```
+config.yml 존재?
+  ├── YES → config.yml의 DB 설정 사용
+  └── NO  → 코드 기본값(MySQL 192.168.20.191:3307)으로 연결 시도
+              └── 연결 실패 시 → SQLite(ictkbd.db) 폴백
+```
+
+**주의**: `DATABASE_URL` 환경변수는 현재 코드에서 읽지 않음 — config.yml 또는 코드 기본값만 사용
+
+## .gitignore 추가 필요 항목
+
+`.uv_py_versions/`가 현재 `.gitignore`에 없음 — 커밋 전 반드시 추가:
+
+```
+# uv Python 캐시
+.uv_py_versions/
+```

@@ -1,0 +1,60 @@
+---
+description: Perplexity·Claude Code·Cursor 통합 워크플로우. 리서치 결과를 코딩에 연결하는 패턴.
+alwaysApply: false
+---
+
+# AI 도구 통합 워크플로우
+
+## 도구별 역할
+
+| 도구 | 요금제 | 주 용도 |
+|------|--------|---------|
+| **Perplexity Pro** | Pro | 실시간 웹 검색, 심층 리서치 |
+| **Claude Code** | Pro | CLI — 코드베이스 전체 작업, 복잡한 구현 |
+| **Cursor** | Pro | GUI — 일상 코딩, 자동완성, 파일 편집 |
+
+## 리서치 → 코딩 연결 패턴
+
+```
+1. Perplexity 웹에서 검색 (웹 브라우저)
+2. 결과를 docs/research/YYMMDD-주제.md 에 저장
+3. Cursor에서 @docs/research/파일명 으로 컨텍스트 주입
+4. Claude Code에서도 동일 파일 참조 가능
+```
+
+리서치 파일 예시:
+```
+docs/research/
+  250316-pandas-parquet-optimization.md
+  250316-backtest-engine-patterns.md
+```
+
+## Claude Code + Cursor 병행
+
+- Cursor 통합 터미널에서 `claude` 명령으로 Claude Code 실행
+- 동일한 파일 시스템 공유 → 컨텍스트 자연스럽게 연결
+- Cursor에서 편집한 파일을 Claude Code가 즉시 인식하고 그 반대도 동일
+
+```
+Cursor 편집기 (GUI)
+  └── 통합 터미널
+        └── claude (Claude Code CLI)
+              → 동일한 프로젝트 디렉토리 공유
+```
+
+## Perplexity MCP는 사용 안 함
+
+Pro 구독은 웹 인터페이스 전용. MCP/API 사용은 별도 과금.
+대신 파일 기반 통합 패턴 사용.
+
+Claude Code에 내장된 WebSearch 도구로 일반 검색 대체 가능.
+심층 리서치가 필요하면 Perplexity 웹 → 파일 저장 → 참조 패턴 사용.
+
+## 공유 컨텍스트 파일
+
+| 파일 | 역할 | 자동 적용 |
+|------|------|----------|
+| `CLAUDE.md` | 프로젝트 전체 규칙 | Claude Code ✅, Cursor ✅ |
+| `.cursor/rules/*.mdc` | Cursor 전용 룰 | Cursor ✅ |
+| `docs/work-logs/TASK.md` | 현재 작업 지시서 | 수동 참조 |
+| `docs/research/*.md` | 리서치 결과 | 수동 `@` 주입 |

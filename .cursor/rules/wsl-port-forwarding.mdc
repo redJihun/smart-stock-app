@@ -1,0 +1,34 @@
+---
+description: WSL2와 호스트(Windows/Cursor) 간 포트 포워딩 이해 및 사용 규칙
+alwaysApply: true
+---
+
+# WSL2 포트 vs 호스트 포트 규칙
+
+이 프로젝트는 **WSL2 내부에서 BE 서버를 9999 포트**로 띄우는 것을 기본으로 한다.
+Windows 호스트(또는 Cursor)가 이 포트에 접근할 때는 **다른 포트(예: 10000)** 로
+포워딩될 수 있으므로, 다음 규칙을 따른다.
+
+## 1. 기준 포트
+
+- BE 기준 포트: **9999**
+- `config.yml`의 `port` 값이 없으면 기본값 9999를 사용한다.
+- WSL 셸에서 서버를 직접 실행할 때도 `--port 9999`를 사용한다.
+
+## 2. WSL 안/밖에서의 접속 차이
+
+- **WSL 내부**:
+  - `curl http://127.0.0.1:9999/health`
+  - `http://localhost:9999/docs`
+- **WSL 외부(Windows, 브라우저, Cursor 포트 포워딩)**:
+  - Cursor/VSCode가 9999를 다른 포트(예: 10000)로 포워딩할 수 있다.
+  - 이 경우 브라우저에서는 `http://localhost:10000` 으로 접속해야 한다.
+
+## 3. 혼동 방지 체크리스트
+
+- 포트가 헷갈리면 먼저 **WSL 내부에서** 아래를 확인한다.
+  - `ss -tlnp | grep 9999` 또는 `netstat -tlnp | grep 9999`
+  - `curl -v http://127.0.0.1:9999/health`
+- 호스트(Windows)에서 접속이 안 될 때는 Cursor/VSCode의 **Ports / Forwarded Ports**
+  패널에서 9999가 어느 포트로 포워딩되어 있는지 확인한다.
+

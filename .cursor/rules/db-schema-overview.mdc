@@ -1,0 +1,85 @@
+---
+description: DB 테이블 구조, 논리적 관계, UID 규칙 요약. models.py 또는 쿼리 작업 시 참조.
+globs: issuance_be_fastapi/domain/board/models.py,issuance_be_fastapi/domain/board/schemas.py,issuance_be_fastapi/domain/board/crud/**,issuance_be_fastapi/functions.py
+alwaysApply: false
+---
+
+# DB 스키마 개요
+
+상세 내용: `docs/handover/handover-step2-db-schema.md`
+
+## 테이블 → UID 접두사 대응
+
+| 테이블 | UID 접두사 | API 상태 |
+|---|---|---|
+| `machine` | `mcn` | ✅ 활성 |
+| `device` | `dve` | ✅ 활성 |
+| `project_info` | `pji` | ✅ 활성 |
+| `contents` | `ctn` | ✅ 활성 |
+| `work_info` | `wki` | ✅ 활성 |
+| `session_info` | `ssi` | ✅ 활성 (핵심 트랜잭션) |
+| `handler_info` | `hdi` | ⚠️ 비활성 |
+| `issue_info` | `isi` | ⚠️ 비활성 |
+| `history_work_info` | `hwi` | ⚠️ 비활성 |
+| `sn_rule` | `snr` | ⚠️ 미사용 |
+| `puf` | `puf` | ⚠️ 미사용 |
+| `etc_info` | `eti` | ⚠️ 비활성 |
+| `enum` | `enm` | ⚠️ 비활성 |
+| `alert_log` | `alt` | ✅ 활성 (대시보드 알림) |
+| `g3_wafer_map` | — | ❌ 코드 미반영 |
+
+## Work 상태 머신 (2026-03-23 DB 실사 확정)
+
+| 상태 | DB 건수 | 전이 가능 | 비고 |
+|------|--------|----------|------|
+| INIT | 1 | → RUNNING | 초기 상태 (생성 시 기본값) |
+| RUNNING | 7 | → FINISHED, ON_STOP, ERROR | 발급 진행 중 |
+| ON_STOP | 208 | → INIT | 일시정지 → 재시작 |
+| ERROR | 0 | → INIT | 오류 → 재시작 |
+| FINISHED | 579 | — | 최종 상태 |
+| NONE/빈값 | 16 | — | 레거시, INIT 취급 |
+
+- `status` 필드: `String(32)`, DB/ORM enum 검증 없음
+- As-Is: 전이 규칙 검증 미구현
+
+## 핵심 참조 관계 (논리적 FK)
+
+```
+machine ──(1:N)──> device
+machine ──(1:N)──> work_info          (mcn_uid, NOT NULL)
+contents ──(1:N)──> project_info      (profile_ctn_uid, NOT NULL)
+contents ──(0:N)──> project_info      (extra_test_code_ctn_uid, nullable)
+project_info ──(0:N)──> work_info     (pji_uid, nullable)
+sn_rule ──(0:N)──> work_info          (snr_uid, nullable)
+work_info ──(1:N)──> session_info     (wki_uid, NOT NULL)  ← 핵심 흐름
+work_info ──(1:N)──> handler_info     (wki_uid, NOT NULL)
+device ──(0:N)──> session_info        (dve_uid, nullable)
+device ──(1:N)──> handler_info        (dve_uid, NOT NULL)
+history_work_info ──(0:N)──> session_info  (hwi_uid, nullable)
+session_info ──(1:N)──> issue_info    (ssi_uid, NOT NULL)
+session_info ──(0:N)──> puf           (ssi_uid, nullable)
+```
+
+## contents 테이블 — 필드별 주의사항
+
+| 필드 | 저장 포맷 | 비고 |
+|------|---------|------|
+| `contents` | `base64(zlib(raw_bytes))` | 다운로드 시 역순 복원 |
+| `hash` | base64(SHA-256 digest) | **레거시 3종 방식 혼재** — 아래 참고 |
+
+### hash 필드 레거시 이슈
+
+- **ctn_1~338**: `sha256(raw_bytes)` 방식으로 저장됨 (263건)
+- **ctn_340~344**: `sha256(json.dumps(parsed, sort_keys=True))` 방식으로 저장됨 (5건)
+- **ctn_339**: 이상 레코드 (전환기 오류)
+- 신규 `_generate_hash()`(`json.dumps` sort_keys 없음)와 전 구간 불일치
+- 마이그레이션 미완료 → `docs/dev-notes/0001-contents-hash-mismatch.md` 참조
+
+## VIEW 구성
+
+| VIEW | JOIN 테이블 | 코드 반영 |
+|---|---|---|
+| `view_session_info` | session_info + work_info + device | ✅ |
+| `view_work_info` | work_info + project_info + sn_rule + machine | ✅ |
+| `view_project_info` | project_info + contents(×2) | ✅ |
+| `view_handler_info` | handler_info + device | ❌ 미반영 |

@@ -1,0 +1,59 @@
+---
+description: Jira MCP 연동 정보 및 ISRN 프로젝트 티켓 구조
+globs: issuance_be_fastapi/routers/**/*.py,docs/**/*.md
+alwaysApply: false
+---
+
+# Jira 연동 컨텍스트
+
+## MCP 설정
+
+- **MCP 서버**: `user-jira` (`@mcp-devtools/jira`)
+- **설정 파일**: `~/.cursor/mcp.json`
+- **실행 바이너리**: `mcp-jira` (args에 명시 필요)
+- **JQL API 제한**: `execute_jql`은 Atlassian API v3 마이그레이션 이슈로 실패 — `get_ticket`으로 개별 조회 사용
+
+## ISRN 프로젝트 구조
+
+- **프로젝트 키**: `ISRN`
+- **보드**: https://ictk.atlassian.net/jira/software/projects/ISRN/boards/1243
+- **티켓 범위**: ISRN-1 ~ ISRN-84 (72개 유효, 12개 삭제/권한 없음)
+- **티켓 특성**: 대부분 제목만 존재, description은 null이거나 이미지 첨부
+
+## 도메인별 티켓 분류
+
+| 도메인 | 티켓 수 | FE/BE 구분 | 대표 티켓 |
+|--------|---------|------------|-----------|
+| 작업(WORK) | 14 | 혼재 | ISRN-6, 17, 26, 27 |
+| 프로그램(PGM) | 9 | FE/BE 분리 | ISRN-28~33, 50, 65 |
+| 대시보드 | 9 | FE/BE 분리 | ISRN-20, 35, 36, 54, 59 |
+| 프로파일(Script) | 5 | FE/BE 분리 | ISRN-69~70, 76, 80 |
+| 컨텐츠 | 5 | 혼재 | ISRN-51, 77~79 |
+| 장비/디바이스 | 4 | 혼재 | ISRN-71~74 |
+| 세션(Session) | 3 | 혼재 | ISRN-9, 11, 52 |
+| 사용자/권한 | 3 | FE/BE 분리 | ISRN-16, 38, 39 |
+| TASK 계층 | 2 | FE/BE 분리 | ISRN-40, 41 |
+
+## 완료 확인된 FE 티켓 (2026-03-13 기준)
+
+ISRN-6, 9, 20, 26, 28, 50, 51, 65, 80, 81 — Jira에서도 Done 확인 완료.
+
+## 미완료 핵심 티켓 (Phase별)
+
+| Phase | Jira | 제목 | 담당 |
+|-------|------|------|------|
+| 1 | ISRN-77 | 컨텐츠 항목 제거 (base64) | BE+FE |
+| 1 | ISRN-74 | 장비 등록 기능 추가 | BE+FE |
+| 1 | ISRN-72, 73 | 디바이스 편집/등록 | BE+FE |
+| 1 | ISRN-52 | SESSION 검색 기능 | FE |
+| 2 | ISRN-36 | 대시보드 기능 BE | BE |
+| 2 | ISRN-54, 59, 60 | 수율/서버상태/실시간 현황 | BE+FE |
+| 2 | ISRN-55, 56 | 서버 정보/리소스 | BE |
+| 2 | ISRN-84 | 최근 알림/에러 | FE |
+| 3 | ISRN-79 | 내용 보기 API | BE |
+| 3 | ISRN-78, 83 | 내용 보기/다운로드 버튼 | FE |
+| 3 | ISRN-69, 70, 76 | 프로파일 내용 영역 | BE+FE |
+| 4 | ISRN-38, 39 | 사용자/권한/그룹 (보류) | BE+FE |
+| 5 | ISRN-40, 41 | TASK 계층 (기획 필요) | BE+FE |
+
+> 상세 분석: `docs/handover/handover-step5-fe-be-gap-analysis.md`

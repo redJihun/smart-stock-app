@@ -1,0 +1,65 @@
+---
+description: Cursor 룰 파일 점검 및 유지보수 기준
+globs: .cursor/rules/*.mdc
+alwaysApply: false
+---
+
+# Cursor 룰 유지보수 기준
+
+## alwaysApply 룰 경량화
+
+`alwaysApply: true` 룰은 **모든 대화에 주입**되므로 50줄 이내를 권장한다.
+초과 시 다른 룰과 중복되는 섹션을 제거하고 `관련 룰 참조` 링크로 대체.
+
+## 적용 범위 점검
+
+`alwaysApply: false`이면서 `globs`도 없는 룰은 **수동 호출만 가능**하다.
+의도적이 아니라면 둘 중 하나를 설정:
+
+```yaml
+# 항상 적용
+alwaysApply: true
+
+# 특정 파일 작업 시 자동 적용
+globs: issuance_be_fastapi/routers/**/*.py
+alwaysApply: false
+```
+
+## 현재 룰 목록 (공용 14 + 로컬 4 = 18개)
+
+> `local-*.mdc` 파일은 `.gitignore` 처리된 개인 룰. Cursor는 로컬에서 자동 로드하지만 git에는 포함되지 않는다.
+
+### 공용 룰 (git 관리, 14개)
+
+| 룰 | 적용 방식 | 비고 |
+|---|---|---|
+| `project-context` | alwaysApply | 핵심 환경 정보 |
+| `naming-conventions` | alwaysApply | 네이밍·Pydantic v1·금지 패턴 |
+| `git-commit-convention` | alwaysApply | 커밋 메시지·브랜치·병합 전략 |
+| `wsl-port-forwarding` | alwaysApply | WSL2 포트 규칙 |
+| `docs-structure` | globs: docs/**/*.md | 문서 구조·인덱스 갱신·ADR |
+| `db-schema-overview` | globs: models/schemas/crud/functions | DB 테이블·UID·VIEW |
+| `router-patterns` | globs: routers/**/*.py | 라우터 기본 구조·로거 |
+| `frontend-backend-gap` | globs: routers/**/*.py | FE/BE 갭·Phase 1~5 |
+| `jira-integration` | globs: routers+docs | Jira MCP·ISRN 티켓 구조 |
+| `raw-sql-patterns` | globs: **/*.py | Raw SQL·CTE 성능 주의 |
+| `uv-env-setup` | globs: requirements.txt | uv 환경·DB 연결 흐름 |
+| `cursor-rules-maintenance` | globs: .cursor/rules/*.mdc | 이 파일 (룰 점검 기준) |
+| `working-days-convention` | globs: docs/**/*.md | 워킹 데이(평일만) |
+| `handover-merge-messages` | 수동 참조 | 인수인계 머지 메시지 패턴 |
+
+### 로컬 룰 (gitignore, 4개)
+
+| 룰 | 적용 방식 | 비고 |
+|---|---|---|
+| `local-agent-workflow` | 수동 참조 | Claude Code CLI ↔ Cursor B+A 워크플로우 |
+| `local-task-cycle` | alwaysApply | 관리자/실행자 작업 사이클 3단계 |
+| `local-ai-tools-workflow` | 수동 참조 | 개인 AI 도구 역할 분리 |
+| `local-prompt-templates` | globs: .cursor/prompt-templates/*.md | 세션 시작용 프롬프트 템플릿 |
+
+## 룰 추가/수정 시 체크리스트
+
+1. frontmatter(`description`, `globs` 또는 `alwaysApply`) 설정 확인
+2. `alwaysApply: true` 룰은 50줄 이내인지 확인
+3. 다른 룰과 내용 중복 없는지 확인 — 중복 시 참조 링크로 대체
+4. 코드 실태와 룰 내용이 일치하는지 확인 (특히 라우터 목록, 엔드포인트 수)

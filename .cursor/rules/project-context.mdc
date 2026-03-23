@@ -1,0 +1,48 @@
+---
+description: 프로젝트 환경 구성, 활성 API 현황, 알려진 이슈 등 핵심 컨텍스트
+alwaysApply: true
+---
+
+# 프로젝트 핵심 컨텍스트
+
+## 전반 주의사항
+
+- `.cursor/rules` 디렉토리 규칙 참고 필수
+- 한국어 사용자 대상 프로젝트
+
+## 환경 구성
+
+- **스테이징 없음**: 로컬 개발 → 운영 서버(SSH 별칭: kms_189) 2단계 구조
+- **로컬 포트**: 직접 실행 9999 / Docker 개발 모드 8874 (혼동 주의)
+- **운영 DB**: MySQL `192.168.20.191:3307/manufacture_v2_0_test`
+- **DB fallback**: `config.yml` 없으면 코드 기본값(MySQL) 시도 → 실패 시 SQLite(`ictkbd.db`) 폴백
+- **로컬 실행환경**: uv 기반 `.venv` (Python 3.11)
+
+## 배포 구조
+
+- **운영 서버 Docker 미사용** — `nohup uvicorn ...` 직접 실행
+- **배포 스크립트**: `sync2189.sh`(rsync) / `sync2189_scp.sh`(tar+scp) / `sync2189_fallback.sh`
+- **전송 범위**: `issuance_be_fastapi/` 만 — config.yml, requirements.txt, docker/ 제외
+- **OpenSSL 불일치**: 스크립트에 `-c aes128-ctr` 포함 우회
+- **프로세스 관리 도구 없음**: 서버 재부팅 시 수동 재시작
+
+## 활성 라우터 (main.py 기준, 총 121개 엔드포인트)
+
+활성(10개): `auth`(29), `dashboard`(4), `workinfos`(15), `projects`(8), `contents`(9), `machines`(6), `devices`(7), `sessions`(13), `analytics`(15), `tools`(15)
+비활성(5개, 의도적 주석): `handlerinfos`, `issueinfos`, `etcinfos`, `enums`, `historyworkinfos`
+
+- `tools` 라우터: 시스템 정보, 유효성 검증, 변환, 백업/복원, UID 생성, 로그 조회 (15개 완전 구현)
+- ⚠️ `tools` 포함 업무 API 전체 인증 미적용 — P2에서 RequirePermission 적용 예정
+
+## Work 상태 머신 (2026-03-23 DB 실사 확정)
+
+`INIT → RUNNING → FINISHED`, `RUNNING → ON_STOP/ERROR → INIT` (재시작)
+- 레거시: `NONE`(15건), 빈값(1건) → INIT 취급
+- As-Is: 전이 규칙 검증 미구현 (아무 값이나 수락)
+
+## 관련 룰 참조
+
+- DB 스키마·UID·FK → `db-schema-overview.mdc`
+- 네이밍·Pydantic v1·result 값 → `naming-conventions.mdc`
+- FE/BE 갭·Jira 티켓 → `frontend-backend-gap.mdc`, `jira-integration.mdc`
+- 상세 Known Issues → `CLAUDE.md` 및 관련 ADR 문서

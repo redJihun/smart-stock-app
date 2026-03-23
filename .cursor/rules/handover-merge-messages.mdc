@@ -1,0 +1,92 @@
+---
+description: 인수인계·문서 작업 브랜치를 develop/main에 스쿼시 머지할 때 머지 메시지(패턴C) 작성 가이드
+alwaysApply: false
+---
+
+# 인수인계·문서 브랜치 머지 메시지 규칙
+
+## 1. 대상
+
+- `docs/`, `docs/handover/`, `docs/work-logs/`, `docs/architecture-decision-records/` 중심으로
+  인수인계·운영 문서·주간 로그·ADR를 정리하는 브랜치
+- 예) `chore/handover-polish`, `docs/handover-*`, `docs/work-logs-*`
+
+이런 브랜치를 `main` 또는 `develop`에 **squash merge 1커밋**으로 합칠 때 사용한다.
+
+## 2. 기본 형식 — 패턴C (Why + Changes + See also)
+
+머지 커밋은 `git-commit-convention.mdc`의 패턴C를 그대로 따른다.
+
+```text
+<type>(<scope>): <한 줄 요약>
+
+<변경 이유 — 왜 이 작업이 필요했는지 (Why)>
+
+Changes:
+- 세부 변경 항목 1
+- 세부 변경 항목 2
+- 세부 변경 항목 3
+
+브랜치 내 주요 커밋 요약:
+- 브랜치 안 커밋 한 줄 요약 1
+- 브랜치 안 커밋 한 줄 요약 2
+
+See also: docs/architecture-decision-records/0001-squash-merge-strategy.md
+```
+
+### type / scope 권장값
+
+- **type**
+  - 문서만 바뀐 경우: `Docs`
+  - 문서 + 운영 스크립트/설정까지 함께 손댄 경우: `Chore` 고려
+- **scope**
+  - 인수인계 중심: `handover`
+  - 배포 중심: `deploy`
+  - FE-BE 연동/갭 분석 중심: `integration` 또는 `fe-be-gap`
+
+예시 헤더:
+
+- `Docs(handover): 인수인계·배포·FE-BE 갭·주간 로그·ADR 문서 정리`
+
+## 3. Why(변경 이유) 작성 팁
+
+- “무엇을”보다 **“왜 지금 이 머지가 필요한지”**를 먼저 설명한다.
+- 인수인계·운영 리스크·FE 협업 관점에서 한두 문단이면 충분하다.
+- 예시 문장 패턴:
+  - `신규 담당자가 운영 배포를 재현하고, FE 연동 우선순위를 빠르게 합의할 수 있도록 ...`
+  - `주차별 업무 이력과 아키텍처 결정 근거를 docs에 남겨 감사 추적과 리뷰 효율을 높이기 위함이다.`
+
+## 4. Changes(변경 목록) 작성 팁
+
+- **파일/디렉토리 단위 + 한 줄 설명**으로 쓴다.
+- 중복 표현을 줄이기 위해 디렉토리 레벨로 묶어도 된다.
+
+예시:
+
+- `- docs/handover/: step4 배포 절차·스크립트·검증 체크리스트, step5 FE-BE 갭·Phase별 우선순위`
+- `- docs/work-logs/: W12 주간 계획·블로커, 인덱스·BACKLOG 등 갱신`
+- `- docs/architecture-decision-records/: Squash merge 전략 등 ADR 및 인덱스`
+- `- docs/ README 등 전체 문서 인덱스 반영`
+
+## 5. 브랜치 내 주요 커밋 요약 작성 팁
+
+- squash merge 시 git이 `Squashed commit of the following:` 블록을 자동으로 붙여주지만,
+  그 위에 **사람이 읽기 좋은 요약을 직접 한 줄씩 작성**한다.
+- 브랜치 안 커밋 전체를 나열하지 않고, **의미 있는 단위**로 묶어서 3~5줄 이내로 정리한다.
+- `git log --oneline origin/main..HEAD` 로 브랜치 내 커밋 목록을 확인한 뒤 작성한다.
+
+예시:
+
+- `인수인계 4단계 배포 프로세스 문서 초안 작성`
+- `FE/BE 갭 분석 및 Phase별 실행 계획 정리`
+- `W12 주간 로그 작성 및 BACKLOG 정리`
+
+## 6. See also 작성
+
+- 스쿼시 머지 전략과 직접 관련 있으므로, 아래 ADR을 기본으로 붙인다.
+- 필요 시 다른 ADR이나 상세 문서 링크를 추가로 나열한다.
+
+```text
+See also: docs/architecture-decision-records/0001-squash-merge-strategy.md
+```
+

@@ -1,0 +1,96 @@
+---
+description: FastAPI 라우터 작성 패턴 및 주의사항
+globs: issuance_be_fastapi/routers/**/*.py
+alwaysApply: false
+---
+
+# 라우터 작성 패턴
+
+## 기본 구조
+
+```python
+from ..logger import setup_logger
+logger = setup_logger("issuance_api.routers.{모듈명}")
+
+@router.get("/", response_model=List[schemas.XxxList])
+def get_items(..., db: Session = Depends(get_db)):
+    logger.debug(f"목록 조회: skip={skip}, limit={limit}")  # 요청 시작
+    items = crud.get_items(db, ...)
+    logger.info(f"항목 {len(items)}개 조회 완료")           # 성공
+    return items
+```
+
+- 에러는 `logger.warning()` 사용
+- 목록 조회: `List[schemas.XxxList]` (간략 스키마)
+- 단건/CUD: `schemas.Xxx` (상세 스키마)
+
+## VIEW + Raw SQL 병합 패턴 (workinfos.py 참고)
+
+```python
+# 1. VIEW 조회
+works = crud.get_view_work_infos(db, ...)
+
+# 2. uid 목록 추출
+list_wki_uid = [work.wki_uid for work in works]
+
+# 3. Raw SQL 통계 조회 (⚠️ 성능 주의)
+sql = some_query.bindparams(wki_list=list_wki_uid)
+result = db.execute(sql)
+stats_map = {row.wki_uid: row for row in result.mappings().all()}
+
+# 4. 병합
+for work in works:
+    data = stats_map.get(work.wki_uid)
+    if data:
+        work.some_field = data.some_field
+```
+
+## 로거 네이밍
+
+```python
+# 패턴: issuance_api.routers.{모듈명}
+logger = setup_logger("issuance_api.routers.sessions")
+logger = setup_logger("issuance_api.routers.workinfos")
+logger = setup_logger("issuance_api.routers.machines")
+```
+
+로그 레벨 기준:
+- `logger.debug()` — 요청 시작, 파라미터 확인
+- `logger.info()` — 성공 완료
+- `logger.warning()` — 404 등 예상 가능한 오류
+
+## Contents 라우터 — hash 계산 주의사항
+
+`_generate_hash()` (`routers/contents.py`) 수정 시 반드시 확인:
+
+### 레거시 DB hash 방식 (3종 혼재)
+
+| 구간 | hash 방식 |
+|------|---------|
+| ctn_1 ~ ctn_338 (263건) | `sha256(raw_bytes)` — 원본 파일 bytes 직접 |
+| ctn_339 (1건) | 이상 레코드 — 전환기 오류 추정 |
+| ctn_340 ~ ctn_344 (5건) | `sha256(json.dumps(parsed, sort_keys=True))` |
+
+### 현재 신규 로직
+
+```python
+def _generate_hash(raw: str) -> str:
+    normalized = json.dumps(json.loads(raw))   # sort_keys 없음
+    digest = hashlib.sha256(normalized.encode()).digest()
+    return base64.b64encode(digest).decode()
+```
+
+- **모든 레거시 레코드(ctn_1~344)와 hash 불일치** — 의도된 상태
+- `sort_keys=True` 미사용으로 ctn_340~344와도 불일치
+- 마이그레이션 방향 미결정 — 상세: `docs/dev-notes/0001-contents-hash-mismatch.md`
+
+### 주의
+
+- `_generate_hash()` 로직 변경 시 기존 레거시 레코드 영향 범위 재검토 필요
+- 비-JSON 파일(.txt 스크립트 등) 업로드 시 `json.loads()` 파싱 오류 발생 가능
+
+## 주의사항
+
+- `print()` 사용 금지 — `logger.debug()` 사용
+- 비활성 라우터(`handlerinfos` 등) 활성화 시 `main.py` 주석 해제 필요
+- 새 라우터 추가 시 `main.py`에 `app.include_router()` 등록 필수

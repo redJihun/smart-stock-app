@@ -1,0 +1,168 @@
+---
+description: docs/ 디렉토리 구조 규칙, 상대경로 링크, README 인덱스 관례
+globs: docs/**/*.md
+alwaysApply: false
+---
+
+# 문서 구조 규칙
+
+## 디렉토리 분리 기준
+
+```
+docs/
+  README.md                              # 전체 문서 인덱스 (필수)
+  handover/                              # 인수인계 전용 문서
+    README.md                            # 인수인계 문서 인덱스 (필수)
+    handover-step{N}-{주제}.md
+  work-logs/                             # 주차별 업무일지 + 장기 관리 문서
+    README.md                            # work-logs 인덱스 (필수)
+    BACKLOG.md                           # 장기 예정 업무, 기술부채 목록
+    NOTES.md                             # 이해관계자 연락처, 회의 메모
+    {YYMMDD시작}-{YYMMDD종료}-W{주차}.md  # 주차별 업무일지
+  architecture-decision-records/         # ADR
+    README.md                            # ADR 인덱스 + 상태 목록 (필수)
+    template.md                          # ADR 작성 템플릿
+    {NNNN}-{주제-kebab-case}.md          # 개별 ADR
+  analytics-api.md                       # 일반 개발/운영 문서는 docs/ 루트
+  deploy-to-remote.md
+  ...
+```
+
+- **인수인계 문서** → `docs/handover/` 하위
+- **주차 업무일지 + 장기 관리 문서** → `docs/work-logs/` 하위
+- **아키텍처 결정 기록** → `docs/architecture-decision-records/` 하위
+- **개발/운영 문서** → `docs/` 루트
+
+## 인수인계 문서 명명 규칙
+
+```
+handover-step{N}-{주제}.md
+
+# 현재 문서 목록
+handover-step1-env-overview.md
+handover-step2-db-schema.md
+handover-step3-architecture.md
+handover-step4-deployment.md
+handover-step5-fe-be-gap-analysis.md
+```
+
+## work-logs 디렉토리 규칙
+
+### 주차 파일 네이밍
+
+```
+{YYMMDD시작}-{YYMMDD종료}-W{주차번호}.md
+
+# 예시
+260309-260313-W11.md
+260316-260320-W12.md
+```
+
+### 주차 파일 포함 내용
+
+- `이번 주 처리할 업무` — 주간 목표 및 일별 계획
+- `병목 요인(Blocker)` — 진행을 막는 요인 및 담당자
+- `완료된 업무` — 주차 종료 시 완료 항목
+
+### 워킹 데이 규칙 (평일만, 주말·공휴일 제외)
+
+**Day 1~5는 평일(월~금)만** 사용합니다. 토요일, 일요일, 공휴일은 업무 계획에 포함하지 않습니다.
+
+예시:
+- ✅ `Day 5 (3/13 금) — ...` (금요일 = 평일)
+- ❌ `Day 5 (3/14 토) — ...` (토요일 = 주말)
+- ❌ `Day 5 (4/10 목) — ...` 공휴일 겹침 시 제외
+
+상세: [working-days-convention.mdc](./working-days-convention.mdc) 참조
+
+### 장기 관리 파일
+
+- `BACKLOG.md` — 주차와 무관한 장기 예정 업무, 기술부채 목록
+- `NOTES.md` — 이해관계자 연락처, 회의 메모, 브리핑 내용
+  - ⚠️ 민감 정보(접속 정보 등) 포함 가능 — `.gitignore` 적용 여부 확인
+
+## architecture-decision-records 디렉토리 규칙
+
+### ADR 파일 네이밍
+
+```
+{NNNN}-{주제-kebab-case}.md
+
+# 예시
+0001-squash-merge-strategy.md
+0002-pydantic-v1-유지.md
+```
+
+### ADR 필수 메타데이터
+
+모든 ADR 파일 상단에 아래 테이블 포함:
+
+```markdown
+| 항목 | 내용 |
+|------|------|
+| 상태 | Proposed / Accepted / Deprecated / Superseded by ADR-XXXX |
+| 날짜 | YYYY-MM-DD |
+| 결정자 | 홍지훈 책임(jhhong@ictk.com) |
+```
+
+### 문서 내 사람 표기 규칙
+
+ADR의 `결정자`/`참여자` 항목은 다음 형식을 권장한다.
+
+- **양식**: `이름 직급(이메일)`
+- **예시**: `홍지훈 책임(jhhong@ictk.com)`
+
+예외:
+
+- 작업 현황/체크리스트의 `by.` 표기 등은 가벼운 식별이 필요할 때 `by. 이름 직급`로 작성해도 무방하다.
+
+### ADR 작성 기준
+
+다음 조건 중 하나 이상 해당하면 ADR 작성:
+- 되돌리기 어려운 기술 결정
+- 팀 합의가 필요했던 결정
+- 나중에 맥락 없이 보면 이상하게 보일 수 있는 결정
+
+**소급 ADR**: 이미 코드에 구현된 결정이라도 맥락이 기록되지 않았다면 소급 작성 가능.
+날짜는 결정 시점이 불명확하면 문서화 시점으로 기재하고, 제목에 별도 표기 불필요.
+
+### ADR 번호 결정
+
+- 순차 증가: `0001`, `0002`, `0003`, …
+- 현재 최신 번호: `docs/architecture-decision-records/README.md` 인덱스 테이블 마지막 행 확인
+
+### ADR 추가 시 갱신 대상
+
+- `docs/architecture-decision-records/README.md` — ADR 인덱스 테이블 갱신
+
+## 상대경로 링크 규칙
+
+```markdown
+# 같은 폴더 내 참조
+[step1](./handover-step1-env-overview.md)
+
+# 상위 폴더 참조 (docs/handover/ → docs/)
+[analytics-api](../analytics-api.md)
+
+# 하위 폴더 참조 (docs/ → docs/handover/)
+[인수인계](./handover/README.md)
+```
+
+## 문서 추가 시 갱신 대상
+
+새 문서를 추가하면 반드시 아래 인덱스를 함께 업데이트:
+
+- `docs/README.md` — 전체 인덱스
+- `docs/handover/README.md` — 인수인계 문서 추가 시
+- `docs/work-logs/README.md` — 주차 파일 추가 시
+- `docs/architecture-decision-records/README.md` — ADR 추가 시
+
+## CLAUDE.md 현행화 규칙
+
+`CLAUDE.md`는 Claude Code용 가이드이며 Cursor 룰과 별도로 관리된다.
+아래 항목이 코드와 불일치하면 반드시 갱신:
+
+- 활성/비활성 라우터 목록 및 개수
+- 엔드포인트 총 수
+- tools 라우터 스텁 상태
+- 관련 문서 링크 (인수인계, work-logs 등)

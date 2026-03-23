@@ -1,0 +1,65 @@
+---
+description: smart-stock-app 프로젝트 컨텍스트. 항상 적용. 파일 구조·스택·현재 구현 현황 포함.
+alwaysApply: true
+---
+
+# 프로젝트 컨텍스트
+
+## 개요
+
+Python 주식 시세 및 거래 전략 샌드박스. 알고리즘 트레이딩 Phase 0 진행 중.
+
+## 기술 스택
+
+| 도구 | 용도 |
+|------|------|
+| `uv` | 패키지 매니저 |
+| `ruff` | 린트·포맷 |
+| `mypy --strict` | 타입 체크 |
+| `pytest` | 테스트 |
+| `FinanceDataReader` | 국내 주식 데이터 |
+| `yfinance` | 해외 주식 데이터 |
+| `pyarrow` + Parquet | 로컬 캐시 및 추적 저장 |
+
+## 디렉토리 구조
+
+```
+src/smart_stock/
+  data/         ← 데이터 수집·로더·캐시 (완성)
+  strategies/   ← 거래 전략 (완성: SMA, RSI, MACD, Bollinger)
+  backtesting/  ← 백테스팅 엔진·지표 (완성)
+  tracking/     ← 성과 추적 (완성: SignalLogger, OutcomeTracker)
+  analysis/     ← 미구현
+  utils/        ← date_utils 등
+tests/          ← 96개 테스트 통과 중
+notebooks/      ← 탐색·실험 (kebab-case.ipynb)
+docs/
+  work-logs/    ← TASK.md / RESULT.md / 주차 업무일지
+  research/     ← 리서치 결과 마크다운 (Perplexity → 여기 저장)
+  architecture-decision-records/
+data/           ← .gitignore 대상 (raw, processed, tracking)
+```
+
+## 핵심 코드 제약
+
+- **파일 500줄 이내** — Cursor는 Read File을 250줄 단위로 읽음. 짧을수록 정확함.
+- `from __future__ import annotations` 첫 줄 필수
+- pandas만 사용 (numpy 직접 사용 금지, math 허용)
+- mypy `--strict` 통과 필수
+- Python 3.11+ (`StrEnum`, `from collections.abc import Callable` 등)
+- 한국어 docstring (NumPy 스타일)
+
+## 네이밍 컨벤션
+
+| 대상 | 규칙 |
+|------|------|
+| 디렉토리·소스 파일 | `snake_case` |
+| 클래스 | `PascalCase` |
+| 함수·변수 | `snake_case` (동사 시작) |
+| 상수 | `UPPER_SNAKE_CASE` |
+| 노트북 | `kebab-case.ipynb` |
+| 문서 | `kebab-case.md` |
+
+## 현재 전체 테스트
+
+96개 통과 (data 17 + strategies 43 + backtesting 19 + tracking 17)

@@ -1,0 +1,33 @@
+---
+description: FE/BE 갭 현황 및 신규 라우터 구현 시 참고할 컨텍스트
+globs: issuance_be_fastapi/routers/**/*.py
+alwaysApply: false
+---
+
+# FE-BE 갭 분석 컨텍스트 (2026-03-23 갱신)
+
+## 프론트엔드 레포 참조
+
+- **로컬 경로**: `/home/hong/workspace/re-issuance-machine-frontend`
+- **API 호출 위치**: `src/recoil/atoms/` (session, work, program, machine, profile, dashboard, auth, user, userGroup)
+- **Axios 인스턴스**: `customAxios` (issuance BE), `customCommonAxios` (KMS — P1에서 전환 예정)
+- **FE 기능 현황 문서**: `re-issuance-machine-frontend/docs/07_feature_status.md`
+
+## 현재 갭 현황 (PRD v0.3 기준)
+
+| 카테고리 | 내용 | Phase |
+|---------|------|-------|
+| BE에 있으나 FE 미사용 | PGM/Contents/Machine 수정·삭제 UI, Analytics 15개, Tools 15개 | P1/P3 |
+| FE가 KMS API 사용 중 | 사용자/그룹/권한 관리 46개 함수 → 자체 BE auth 전환 | P1 |
+| 검수 필요 | 대시보드 실데이터 검증, E2E 발급 플로우 | P1 |
+| BE 보강 필요 | DELETE 참조 검증 5개 모델, Work 상태 전이 검증 | P1 |
+
+> 상세: `docs/dev-notes/PRD.md` 4절 참조
+
+## 신규 라우터/기능 구현 시 체크리스트
+
+1. FE 호출 경로와 BE 엔드포인트 경로 일치 확인
+2. FE가 기대하는 응답 필드 vs BE Pydantic 스키마 대조
+3. `main.py`에 `app.include_router()` 등록
+4. DELETE 구현 시 참조 검증 필수 (PRD 1.5절 삭제 정책, 409 응답 스펙)
+5. 상세 분석: `docs/dev-notes/PRD.md`, `docs/handover/handover-step5-fe-be-gap-analysis.md`
