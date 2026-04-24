@@ -1,0 +1,31 @@
+// ~/.claude/keybindings.json — 키바인딩 커스터마이징
+//
+// 기본 키바인딩을 유지하면서 추가/변경 가능.
+// "key" 형식: "ctrl+x", "alt+s", "ctrl+shift+p" 등
+//
+// 사용 가능한 액션:
+//   submit         — 현재 입력 제출 (기본: Enter)
+//   newline        — 줄바꿈 (기본: Shift+Enter)
+//   interrupt      — 현재 작업 중단 (기본: Escape)
+//   history_prev   — 이전 입력 (기본: Up)
+//   history_next   — 다음 입력 (기본: Down)
+//
+// Chord (연속 키):
+//   "ctrl+k ctrl+c" — ctrl+k 누른 후 ctrl+c 누르면 실행
+[
+  // 예: Ctrl+S로 제출 (기본 Enter 대신)
+  // {
+  //   "key": "ctrl+s",
+  //   "action": "submit"
+  // },
+
+  // 예: Enter로 줄바꿈, Ctrl+Enter로 제출
+  // {
+  //   "key": "Enter",
+  //   "action": "newline"
+  // },
+  // {
+  //   "key": "ctrl+Enter",
+  //   "action": "submit"
+  // }
+]

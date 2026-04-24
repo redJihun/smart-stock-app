@@ -1,0 +1,90 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git log:*)",
+      "Bash(git diff:*)",
+      "Bash(git status:*)",
+      "Bash(uv run *)",
+      "Bash(python *)",
+      "Bash(ls *)",
+      "Bash(pwd)",
+      "Bash(git status)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(npm list *)",
+      "Bash(grep *)",
+      "Bash(grep:*)",
+      "Bash(find *)",
+      "Bash(find:*)",
+      "Bash(head *)",
+      "Bash(head:*)",
+      "Bash(tail *)",
+      "Bash(tail:*)",
+      "Bash(cat *)",
+      "Bash(cat:*)",
+      "Bash(sed *)",
+      "Bash(sed:*)",
+      "Bash(cd *)",
+      "Bash(cd*)",
+      "Bash(cd:*)",
+      "Bash(cd: *)",
+      "Bash(cd :*)",
+      "Bash(cd : *)",
+      "Bash(wc:*)",
+      "Bash(wc *)",
+      "Bash(sort:*)",
+      "Bash(sort *)",
+      "Edit(*)",
+      "Read(*)",
+      "Write(*)",
+      "Skill(brainstorm)",
+      "Skill(brainstorm-opus)",
+      "Skill(command-create)",
+      "Skill(command-gen)",
+      "Skill(commit-message-suggest)",
+      "Skill(crud-gen)",
+      "Skill(deploy-check)",
+      "Skill(dev-flow)",
+      "Skill(prompt-create)",
+      "Skill(squash-merge-suggest)",
+      "Skill(task-exec)",
+      "Skill(task-plan)",
+      "Skill(verify)",
+      "Skill(work-log-close)",
+      "Skill(work-log-create)"
+    ],
+    "deny": [
+      "Bash(rm *)",
+      "Bash(git push *)",
+      "Bash(git reset *)",
+      "Bash(git pull *)",
+      "Bash(git commit *)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": ["mysql"],
+  "hooks": {
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/notify.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/post-edit-lint.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

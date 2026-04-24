@@ -1,0 +1,29 @@
+// .claude/settings.json — 프로젝트별 설정 (이 프로젝트에만 적용)
+// git에 커밋하여 팀원과 공유 가능
+//
+// .claude/settings.local.json — 로컬 오버라이드 (git에서 제외)
+// 개인 설정, API 키, 로컬 경로 등
+//
+// 우선순위: settings.local.json > settings.json > ~/.claude/settings.json
+{
+  // ─── 권한 설정 ───
+  "permissions": {
+    "allow": [
+      // 프로젝트에서 자주 쓰는 안전한 명령
+      "Bash(source .venv/bin/activate && uv run ruff check:*)",
+      "Bash(source .venv/bin/activate && uv run ruff format:*)",
+      "Bash(source .venv/bin/activate && uv run pytest:*)",
+      "Bash(source .venv/bin/activate && python -c:*)"
+    ],
+    "deny": []
+  },
+
+  // ─── MCP 서버 (프로젝트) ───
+  // .claude/mcp.json 에 정의된 서버 중 활성화할 목록
+  "enableAllProjectMcpServers": true,
+  // 또는 특정 서버만 활성화:
+  // "enabledMcpjsonServers": ["mysql", "github"],
+
+  // ─── 스타일 오버라이드 ───
+  "outputStyle": "default"
+}

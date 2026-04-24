@@ -1,0 +1,62 @@
+// ~/.claude/settings.json — 글로벌 설정 (모든 프로젝트에 적용)
+//
+// 실제 사용 시 주석 제거 후 순수 JSON으로 저장
+// jsonc 확장자는 설명용. 실제 파일명: settings.json
+{
+  // ─── 권한 모드 ───
+  // "default": 위험한 명령 시 사용자 확인 (권장)
+  // "plan": 읽기만 허용, 쓰기/실행 차단 (설계 단계)
+  // "bypassPermissions": 모든 도구 자동 허용 (숙련자용, 주의)
+  "permissions": {
+    "defaultMode": "default",
+    "allow": [
+      // 자주 사용하는 안전한 명령을 사전 허용
+      "Bash(git log:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      // MySQL: mcp__mysql__mysql_query 는 allow 목록에 넣지 않는다.
+      // → SELECT/SHOW/DESCRIBE 등 읽기 쿼리도 실행 전 사용자 확인을 받는다.
+      // → INSERT/UPDATE/DELETE/CREATE/DROP 등 변경 쿼리는 반드시 사용자 동의 필요.
+      // MCP 권한은 도구명 단위로만 제어되므로 읽기/쓰기를 자동으로 구분할 수 없다.
+    ],
+    "deny": [
+      // 위험한 명령 차단
+      "Bash(rm -rf /)",
+      "Bash(git push --force:*)"
+    ]
+  },
+
+  // ─── 모델 설정 ───
+  // 기본 모델 선택. 세션 중 /model 로 변경 가능
+  // "sonnet" (기본), "opus" (고성능), "haiku" (경제적)
+  // 생략 시 sonnet 사용
+  // "model": "sonnet",
+
+  // ─── 응답 스타일 ───
+  // "default": 기본, "concise": 간결, "verbose": 상세
+  "outputStyle": "default",
+
+  // ─── 언어 ───
+  // 응답 언어 설정. "Korean", "English", "Japanese" 등
+  "language": "Korean",
+
+  // ─── 노력 수준 ───
+  // "low": 빠르지만 피상적, "medium": 균형, "high": 깊이 있는 분석
+  "effortLevel": "high",
+
+  // ─── 상태 표시줄 ───
+  // 터미널 하단에 커스텀 정보 표시
+  // "statusLine": {
+  //   "type": "command",
+  //   "command": "bash ~/.claude/statusline-command.sh"
+  // },
+
+  // ─── MCP 서버 (글로벌) ───
+  "mcpServers": {
+    // 예: 파일시스템 MCP
+    // "filesystem": {
+    //   "command": "npx",
+    //   "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/user/workspace"]
+    // }
+  }
+}
